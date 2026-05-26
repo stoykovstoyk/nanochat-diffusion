@@ -16,7 +16,7 @@ class Tokenizer:
         self.data_dir = data_dir
         self.load(data_dir, verbose=verbose)
 
-    def load(self, data_dir, vocab_size=32768, special_tokens=None):
+    def load(self, data_dir=None, vocab_size=32768, special_tokens=None, verbose=False):
         """Load tokenizer from data directory"""
         if special_tokens is None:
             special_tokens = ["<|endoftext|>", "<|pad|>", "<|startofmessage|>", 
@@ -39,8 +39,9 @@ class Tokenizer:
         print0(f"Initialized synthetic tokenizer with vocab_size={vocab_size}")
 
     def encode(self, texts, prepend=False, num_threads=1):
-        """Encode text to token IDs"""
-        if isinstance(texts, str):
+        """Encode text to token IDs. Returns flat list for str, list of lists for list."""
+        single_str = isinstance(texts, str)
+        if single_str:
             texts = [texts]
         
         results = []
@@ -50,6 +51,8 @@ class Tokenizer:
             if prepend:
                 tokens = [self.get_bos_token_id()] + tokens
             results.append(tokens)
+        if single_str:
+            return results[0]
         return results
 
     def decode(self, tokens):

@@ -194,7 +194,7 @@ class GPT(nn.Module):
         # As for rotary_seq_len, these rotary embeddings are pretty small/cheap in memory,
         # so let's just over-compute them by 10X, but assert fail if we ever reach that amount.
         # In the future we can dynamically grow the cache, for now it's fine.
-        self.rotary_seq_len = config.sequence_len * 10 # 10X over-compute should be enough, TODO make nicer?
+        self.rotary_seq_len = config.sequence_len
         head_dim = config.n_embd // config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False) # persistent=False means it's not saved to the checkpoint
@@ -315,6 +315,19 @@ class GPT(nn.Module):
 
     def get_device(self):
         return self.transformer.wte.weight.device
+
+    def _flash_attn(self, q, k, v, causal=True, window_size=(-1, 0), kv_cache=None):
+        """Wrapper around flash attention for use by diffusion model."""
+        from nanochat_diffusion.flash_attention import flash_attn_func, flash_attn_with_kvcache
+        if kv_cache is None:
+            return flash_attn_func(q, k, v, causal=causal, window_size=window_size)
+        else:
+            k_cache, v_cache = kv_cache.get_layer_cache(0)
+            return flash_attn_with_kvcache(
+                q, k_cache, v_cache, k=k, v=v,
+                cache_seqlens=kv_cache.cache_seqlens,
+                causal=causal, window_size=window_size,
+            )
 
     def estimate_flops(self):
         """

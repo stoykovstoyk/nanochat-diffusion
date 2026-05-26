@@ -105,13 +105,18 @@ if args.model == "diffusion":
     n_embd = args.depth * args.aspect_ratio  # e.g., 8 * 64 = 512
     print0(f"Model dimension: {n_embd}")
     
+    # Compute n_head dynamically (same as original nanochat: n_embd // 128)
+    n_head = n_embd // 128
+    n_kv_head = n_head  # GQA: n_kv_head == n_head
+    print0(f"n_head: {n_head}, n_kv_head: {n_kv_head}")
+    
     # Create diffusion config
     diffusion_config = DiffusionConfig(
         sequence_len=args.max_seq_len,
         vocab_size=args.vocab_size,
         n_layer=args.depth,
-        n_head=6,  # fixed for simplicity
-        n_kv_head=6,
+        n_head=n_head,
+        n_kv_head=n_kv_head,
         n_embd=n_embd,
         window_pattern=args.window_pattern,
         num_diffusion_steps=args.num_diffusion_steps,
@@ -179,6 +184,8 @@ class SyntheticDataset:
         return len(self.texts)
     
     def __getitem__(self, idx):
+        if isinstance(idx, torch.Tensor):
+            return torch.stack([self.__getitem__(int(i)) for i in idx])
         text = self.texts[idx]
         tokens = self.tokenizer.encode(text, prepend=True)
         # Pad or truncate to max_seq_len
@@ -240,13 +247,24 @@ else:
 print0(f"Optimizer: AdamW with lr={args.lr}, weight_decay={args.weight_decay}")
 
 # -----------------------------------------------------------------------------
-# Setup wandb
-wandb_run = wandb.init(
-    project="nanochat_diffusion",
-    name=args.run,
-    config=vars(args),
-    tags=["diffusion", "llm"],
-)
+# Setup wandb (optional, falls back to DummyWandb if no API key)
+try:
+    wandb_run = wandb.init(
+        project="nanochat_diffusion",
+        name=args.run,
+        config=vars(args),
+        tags=["diffusion", "llm"],
+    )
+except Exception:
+    print0("wandb not configured, using DummyWandb")
+    import wandb as _wandb
+    wandb_run = _wandb.init(
+        project="nanochat_diffusion",
+        name=args.run,
+        config=vars(args),
+        tags=["diffusion", "llm"],
+        mode="disabled",
+    )
 
 # -----------------------------------------------------------------------------
 # Training loop
@@ -414,8 +432,10 @@ save_checkpoint(
 )
 
 # Cleanup
-if isinstance(wandb_run, wandb.wandb_run.Run):
+try:
     wandb_run.finish()
+except Exception:
+    pass
 compute_cleanup()
 
 print0("Diffusion LLM training pipeline complete!")
