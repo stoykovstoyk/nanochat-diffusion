@@ -84,3 +84,12 @@ def flash_attn_with_kvcache(q, k_cache, v_cache, k=None, v=None, cache_seqlens=N
     
     # Run flash attention on cached keys/values
     return flash_attn_func(q, k_cache, v_cache, causal=causal, window_size=window_size)
+
+
+# Make the module callable so gpt.py's `flash_attn.flash_attn_func(...)` works
+class _FlashAttnModule:
+    flash_attn_func = flash_attn_func
+    flash_attn_with_kvcache = flash_attn_with_kvcache
+
+
+flash_attn = _FlashAttnModule()

@@ -72,7 +72,7 @@ parser.add_argument("--target-param-data-ratio", type=float, default=12, help="t
 
 # Optimization
 parser.add_argument("--device-batch-size", type=int, default=16, help="per-device batch size")
-parser.add_argument("--compile", action=".store_true", help="torch.compile the model")
+parser.add_argument("--compile", action="store_true", help="torch.compile the model")
 parser.add_argument("--warmup-iters", type=int, default=50, help="warmup steps")
 parser.add_argument("--lr", type=float, default=4e-4, help="base learning rate")
 parser.add_argument("--weight-decay", type=float, default=0.1, help="weight decay")

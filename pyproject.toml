@@ -1,7 +1,7 @@
 [project]
-name = "nanochat"
+name = "nanochat-diffusion"
 version = "0.1.0"
-description = "the minimal full-stack ChatGPT clone"
+description = "Diffusion LLM framework — masked token denoising at scale"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

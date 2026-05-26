@@ -254,3 +254,25 @@ def load_dataset(name: str, path: str = "", split: str = "train",
 register_dataset("c4", "data/c4", max_seq_len=1024)
 register_dataset("fineweb", "data/fineweb", max_seq_len=2048)
 register_dataset("smoltalk", "data/smoltalk", max_seq_len=1024)
+
+# -----------------------------------------------------------------------------
+# Parquet file listing (for dataloader.py)
+# -----------------------------------------------------------------------------
+
+import glob
+
+DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+
+
+def list_parquet_files(data_dir=None, warn_on_legacy=False):
+    """Looks into a data dir and returns full paths to all parquet files."""
+    data_dir = data_dir or DATA_DIR
+    if not os.path.exists(data_dir):
+        if warn_on_legacy:
+            print(f"Could not find: {data_dir}")
+        return []
+    parquet_files = sorted([
+        f for f in os.listdir(data_dir)
+        if f.endswith('.parquet') and not f.endswith('.tmp')
+    ])
+    return [os.path.join(data_dir, f) for f in parquet_files]

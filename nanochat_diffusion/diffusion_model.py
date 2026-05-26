@@ -62,6 +62,13 @@ class DiffusionConfig:
     # Sampling / inference config
     sampling_steps: int = 20                  # number of denoising steps (fewer than training steps)
     unmask_schedule: str = "linear"           # unmask schedule: "linear", "cosine", "exponential"
+    
+    def __post_init__(self):
+        """Ensure n_head divides n_embd and n_head >= n_kv_head."""
+        assert self.n_embd % self.n_head == 0, \
+            f"n_embd ({self.n_embd}) must be divisible by n_head ({self.n_head})"
+        assert self.n_head % self.n_kv_head == 0, \
+            f"n_head ({self.n_head}) must be divisible by n_kv_head ({self.n_kv_head})"
 
     def to_gpt_config(self) -> GPTConfig:
         """Convert to a plain GPTConfig (without diffusion fields)."""

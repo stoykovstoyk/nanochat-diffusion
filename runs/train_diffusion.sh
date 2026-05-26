@@ -4,6 +4,9 @@
 
 set -e
 
+# Device defaults to CPU
+DEVICE="${DEVICE:-cpu}"
+
 # Model config
 DEPTH=${DEPTH:-8}
 ASPECT_RATIO=${ASPECT_RATIO:-64}
@@ -35,29 +38,33 @@ echo "Model dim: $N_EMBD"
 echo "Seq len: $MAX_SEQ_LEN"
 echo "Device batch size: $DEVICE_BATCH_SIZE"
 echo "LR: $LR"
+echo "Device: $DEVICE"
 echo "Num diffusion steps: $NUM_DIFFUSION_STEPS"
 echo "Max mask ratio: $MAX_MASK_RATIO"
 echo "Noise schedule: $NOISE_SCHEDULE"
 echo "=========================================="
 
-OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m scripts.diffusion_train -- \
-    --depth=$DEPTH \
-    --aspect-ratio=$ASPECT_RATIO \
-    --max-seq-len=$MAX_SEQ_LEN \
-    --window-pattern=$WINDOW_PATTERN \
-    --device-batch-size=$DEVICE_BATCH_SIZE \
-    --lr=$LR \
-    --warmup-iters=$WARMUP_ITERS \
-    --compile \
-    --num-diffusion-steps=$NUM_DIFFUSION_STEPS \
-    --max-mask-ratio=$MAX_MASK_RATIO \
-    --noise-schedule=$NOISE_SCHEDULE \
-    --unk-token-id=$UNK_TOKEN_ID \
-    --vocab-size=$VOCAB_SIZE \
-    --num-iterations=$NUM_ITERATIONS \
-    --target-flops=$TARGET_FLOPS \
-    --save-every=1000 \
-    --eval-iters=100 \
-    --run="diffusion_speedrun"
+# Run with plain python (no torchrun) for CPU/single-gpu
+echo "Running on: $DEVICE"
+
+OMP_NUM_THREADS=1 python -m scripts.diffusion_train \
+    --device-type "$DEVICE" \
+    --depth "$DEPTH" \
+    --aspect-ratio "$ASPECT_RATIO" \
+    --max-seq-len "$MAX_SEQ_LEN" \
+    --window-pattern "$WINDOW_PATTERN" \
+    --device-batch-size "$DEVICE_BATCH_SIZE" \
+    --lr "$LR" \
+    --warmup-iters "$WARMUP_ITERS" \
+    --num-diffusion-steps "$NUM_DIFFUSION_STEPS" \
+    --max-mask-ratio "$MAX_MASK_RATIO" \
+    --noise-schedule "$NOISE_SCHEDULE" \
+    --unk-token-id "$UNK_TOKEN_ID" \
+    --vocab-size "$VOCAB_SIZE" \
+    --num-iterations "$NUM_ITERATIONS" \
+    --target-flops "$TARGET_FLOPS" \
+    --save-every 1000 \
+    --eval-iters 100 \
+    --run "diffusion_speedrun"
 
 echo "Training complete!"

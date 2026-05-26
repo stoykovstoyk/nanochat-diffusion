@@ -5,7 +5,7 @@ Adapted from karpathy/nanochat/nanochat/dataloader.py
 """
 
 import torch
-import pyarrow.paret as pq
+import pyarrow.parquet as pq
 from nanochat_diffusion.common import get_dist_info
 from nanochat_diffusion.dataset import list_parquet_files
 
@@ -39,6 +39,23 @@ def _document_batches(split, resume_state_dict, tokenizer_batch_size):
                 rg_idx += ddp_world_size
             pq_idx += 1
         first_pass = False
+
+def tokenizing_distributed_data_loader_bos_bestfit(
+    tokenizer, B, T, split,
+    tokenizer_threads=4, tokenizer_batch_size=128,
+    device="cuda", buffer_size=1000
+):
+    """Simplified dataloader without resume state."""
+    state = {"resume_pq_idx": 0, "resume_rg_idx": None}
+    return tokenizing_distributed_data_loader_with_state_bos_bestfit(
+        tokenizer, B, T, split,
+        tokenizer_threads=tokenizer_threads,
+        tokenizer_batch_size=tokenizer_batch_size,
+        device=device,
+        resume_state_dict=state,
+        buffer_size=buffer_size
+    )
+
 
 def tokenizing_distributed_data_loader_with_state_bos_bestfit(
     tokenizer, B, T, split,
