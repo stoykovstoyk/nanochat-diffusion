@@ -79,6 +79,8 @@ def tokenizing_distributed_data_loader_with_state_bos_bestfit(
     
     # Pre-allocate buffers
     use_cuda = device == "cuda"
+    # row_buffer holds one row of T+1 tokens at a time (B rows, T+1 columns each)
+    row_buffer = torch.empty(B, row_capacity, dtype=torch.long)
     cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=use_cuda)
     gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device=device)
     cpu_inputs = cpu_buffer[:B * T].view(B, T)

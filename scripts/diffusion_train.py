@@ -1,13 +1,3 @@
-"""
-Diffusion LLM Training Script.
-
-Usage:
-    python -m scripts.diffusion_train
-    torchrun --nproc_per_node=8 -m scripts.diffusion_train
-
-Adapted from karpathy/nanochat's base_train.py for diffusion LLM training.
-"""
-
 import os
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -16,8 +6,8 @@ import json
 import time
 import math
 import argparse
-from dataclasses import asdict
-from contextlib import contextmanager
+import multiprocessing
+import sys
 
 import wandb
 import torch
@@ -50,6 +40,7 @@ parser.add_argument("--model", type=str, default="diffusion", help="model type: 
 
 # Runtime
 parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
+parser.add_argument("--num-cpus", type=str, default="all", help="number of CPU cores to use (integer or 'all')")
 
 # Model architecture
 parser.add_argument("--depth", type=int, default=8, help="depth of the Transformer model")
@@ -91,6 +82,19 @@ parser.add_argument("--vocab-size", type=int, default=32768, help="vocab size")
 parser.add_argument("--tokenizer-batch-size", type=int, default=128, help="batch size for tokenization")
 
 args = parser.parse_args()
+
+# -----------------------------------------------------------------------------
+# Parse CPU core count
+if args.num_cpus == "all":
+    num_cpus = multiprocessing.cpu_count()
+else:
+    try:
+        num_cpus = int(args.num_cpus)
+        if num_cpus < 1:
+            raise ValueError("num_cpus must be >= 1")
+    except ValueError as e:
+        raise argparse.ArgumentError(None, f"Invalid --num_cpus value: {args.num_cpus} (use an integer >= 1 or 'all')") from e
+print0(f"CPU cores: {num_cpus}")
 
 # -----------------------------------------------------------------------------
 # Compute initialization
@@ -198,25 +202,36 @@ class SyntheticDataset:
 # For demo, use simple dataset
 dataset = SyntheticDataset(sample_texts, tokenizer, args.max_seq_len)
 
-# Create dataloader
-def get_dataloader(split="train"):
-    # Simple implementation for demo
-    indices = torch.randperm(len(dataset)) if split == "train" else torch.arange(len(dataset))
-    for i in range(0, len(indices), args.device_batch_size):
-        batch_idx = indices[i:i+args.device_batch_size]
-        batch = dataset[batch_idx]
-        yield batch
+# Create proper distributed dataloader driven by --num_cpus
+print0(f"Parallelism: {num_cpus} tokenizer threads, buffer_size={num_cpus}")
+dataloader = tokenizing_distributed_data_loader_with_state_bos_bestfit(
+    tokenizer=tokenizer,
+    B=args.device_batch_size,
+    T=args.max_seq_len,
+    split="train",
+    tokenizer_threads=num_cpus,
+    tokenizer_batch_size=args.tokenizer_batch_size,
+    device=str(device),
+    resume_state_dict=None,
+    buffer_size=num_cpus,
+)
 
-# For proper training, use the distributed dataloader
-# dataloader = tokenizing_distributed_data_loader_bos_bestfit(
-#     tokenizer=tokenizer,
-#     B=args.device_batch_size,
-#     T=args.max_seq_len,
-#     split="train",
-#     tokenizer_threads=4,
-#     tokenizer_batch_size=128,
-#     device=device,
-# )
+def get_dataloader(split="train", num_workers=None):
+    """Return the distributed dataloader for the requested split."""
+    if split == "train":
+        return dataloader
+    # For eval, create a fresh iterator from the same config
+    return tokenizing_distributed_data_loader_with_state_bos_bestfit(
+        tokenizer=tokenizer,
+        B=args.device_batch_size,
+        T=args.max_seq_len,
+        split="val",
+        tokenizer_threads=num_cpus,
+        tokenizer_batch_size=args.tokenizer_batch_size,
+        device=str(device),
+        resume_state_dict=None,
+        buffer_size=num_cpus,
+    )
 
 # -----------------------------------------------------------------------------
 # Set up optimizer
@@ -276,7 +291,7 @@ total_steps = 0
 best_loss = float('inf')
 
 # Get model to compute FLOPs
-peak_flops = get_peak_flops(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "unknown")
+peak_flops = get_peak_flops("cuda" if torch.cuda.is_available() else "unknown")
 
 # Check if we should just evaluate
 if args.eval_only:
@@ -297,10 +312,12 @@ for epoch in range(num_epochs):
     # Create dataloader for this epoch
     dataloader = get_dataloader("train")
     
-    for step_idx, batch in enumerate(dataloader):
+    for step_idx, (input_tokens, target_tokens) in enumerate(dataloader):
         total_steps += 1
+        if total_steps == 1 or total_steps == 6:
+            print0(f"Step {total_steps}: receiving batch, shape={input_tokens.shape}")
         
-        # Prepare batch
+        # Prepare batch (dataloader yields (inputs, targets) tuples)
         if args.model == "diffusion":
             # For diffusion LLM:
             # - Sample random timestep
@@ -308,17 +325,17 @@ for epoch in range(num_epochs):
             # - Forward pass with masked input
             # - Compute loss on unmasked positions
             
-            input_tokens = batch  # (B, T)
-            B, T = input_tokens.shape
+            inputs, targets = input_tokens, target_tokens
+            B, T = inputs.shape
             
             # Sample random timestep for this batch
             t = torch.randint(0, args.num_diffusion_steps, (B,), device=device)
             
             # Mask tokens at this noise level
-            masked_tokens = model.mask_tokens(input_tokens, t)
+            masked_tokens = model.mask_tokens(inputs, t)
             
             # Forward pass
-            loss = model(masked_tokens, t=t, targets=input_tokens)
+            loss = model(masked_tokens, t=t, targets=targets)
             
             # Backward pass
             loss.backward()
@@ -335,8 +352,8 @@ for epoch in range(num_epochs):
             
         else:
             # Standard GPT forward pass
-            targets = input_tokens[:, 1:]  # Next token
-            inputs = input_tokens[:, :-1]
+            targets = inputs[:, 1:]  # Next token
+            inputs = inputs[:, :-1]
             
             logits = model(inputs)
             loss = torch.nn.functional.cross_entropy(
@@ -375,14 +392,12 @@ for epoch in range(num_epochs):
             
             with torch.no_grad():
                 eval_dataloader = get_dataloader("eval")
-                for eval_step, eval_batch in enumerate(eval_dataloader):
+                for eval_step, (eval_inputs, eval_targets) in enumerate(eval_dataloader):
                     if args.model == "diffusion":
-                        t_eval = torch.zeros(eval_batch.shape[0], device=device)
-                        masked_eval = model.mask_tokens(eval_batch, t_eval)
-                        eval_loss = model(masked_eval, t=t_eval, targets=eval_batch)
+                        t_eval = torch.zeros(eval_inputs.shape[0], device=device)
+                        masked_eval = model.mask_tokens(eval_inputs, t_eval)
+                        eval_loss = model(masked_eval, t=t_eval, targets=eval_targets)
                     else:
-                        eval_targets = eval_batch[:, 1:]
-                        eval_inputs = eval_batch[:, :-1]
                         eval_logits = model(eval_inputs)
                         eval_loss = torch.nn.functional.cross_entropy(
                             eval_logits.view(-1, eval_logits.size(-1)),
