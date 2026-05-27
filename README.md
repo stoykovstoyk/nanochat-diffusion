@@ -66,7 +66,8 @@ nanochat_diffusion/
 ├── scripts/
 │   ├── diffusion_train.py        # Main training entry
 │   ├── diffusion_infer.py        # Inference/generation entry
-│   └── diffusion_evaluate.py     # Benchmark evaluation entry
+│   ├── diffusion_evaluate.py     # Benchmark evaluation entry
+│   └── download_dataset.py       # Download real data (FineWeb etc.)
 ├── ui.html                       # ChatGPT-like web UI (from nanochat)
 ├── logo.svg                      # Logo (from nanochat)
 ├── pyproject.toml                # Dependencies
@@ -92,65 +93,38 @@ source .venv/bin/activate
 
 The nanochat-diffusion code lives inside the nanochat repo as `scripts/` and `nanochat_diffusion/`.
 
-### 2. Train a diffusion model
+### 2. Download real training data
 
 ```bash
-# Simple training on CPU (small model, ~2 min)
-python -m scripts.diffusion_train \
-    --depth=8 \
-    --max-seq-len=256 \
-    --device-batch-size=8 \
-    --num-iterations=100
-
-# Training on GPU
-python -m scripts.diffusion_train \
-    --device-type=cuda \
-    --depth=8 \
-    --aspect-ratio=64 \
-    --max-seq-len=1024 \
-    --device-batch-size=16 \
-    --lr=4e-4 \
-    --warmup-iters=100 \
-    --num-diffusion-steps=1000 \
-    --max-mask-ratio=0.8 \
-    --num-iterations=500
-
-# Training with torch.compile (GPU recommended)
-python -m scripts.diffusion_train \
-    --device-type=cuda \
-    --depth=12 \
-    --max-seq-len=1024 \
-    --device-batch-size=16 \
-    --compile \
-    --num-iterations=1000
+# Download 50,000 FineWeb articles (~80 MB)
+python -m scripts.download_dataset --num-examples 50000
 ```
 
-### 3. Generate text with diffusion sampling
+Downloaded parquet files go into `data/`. The existing dataloader reads them automatically.
+
+### 3. Train a diffusion model
 
 ```bash
-# Diffusion denoising from prompt
-python -m scripts.diffusion_infer \
-    --model diffusion \
-    --prompt "Hello world" \
-    --max-tokens 64 \
-    --temperature 0.8 \
-    --mode diffusion
-
-# Autoregressive generation
-python -m scripts.diffusion_infer \
-    --model diffusion \
-    --prompt "Once upon a time" \
-    --max-tokens 128 \
-    --mode autoregressive
+# Train on the real data
+python -m scripts.diffusion_train --device-type=cuda \
+    --depth=8 --max-seq-len=1024 --device-batch-size=16 \
+    --num-iterations=2000 --lr=3e-4 --warmup-iters=200
 ```
 
-### 4. Evaluate the model
+### 4. Generate text with the trained model
+
+```bash
+python -m scripts.diffusion_infer --model diffusion \
+    --prompt "tell a joke" --max-tokens 64 --mode diffusion
+```
+
+### 5. Evaluate the model
 
 ```bash
 python -m scripts.diffusion_evaluate --model diffusion --tasks gsm8k,arc
 ```
 
-### 5. Speedrun benchmark
+### 6. Speedrun benchmark
 
 A 100-iteration benchmark that measures training throughput (useful after code changes):
 
@@ -499,9 +473,39 @@ python -m scripts.diffusion_infer \
     --mode diffusion
 ```
 
-This loads the latest checkpoint from `~/.cache/nanochat_diffusion/checkpoints/diffusion/eval/`.
+This loads the latest checkpoint from `~/.cache/nanochat_diffusion/checkpoints/diffusion/train/`.
+
+You can also load a specific checkpoint step:
+
+```bash
+python -m scripts.diffusion_infer \
+    --model diffusion \
+    --prompt "tell a joke" \
+    --max-tokens 64 \
+    --checkpoint-step 500 \
+    --mode diffusion
+```
+
+### Resuming training
+
+```bash
+# Resume from latest checkpoint
+python -m scripts.diffusion_train --device-type=cuda \
+    --depth=8 --max-seq-len=1024 --device-batch-size=16 \
+    --num-iterations=4000 --lr=3e-4 --warmup-iters=200 \
+    --resume=latest
+
+# Resume from a specific step
+python -m scripts.diffusion_train \
+    --resume=step_000001000
+
+# Resuming restores model weights and optimizer state,
+# and continues training from the saved step counter.
+```
 
 ---
+
+## Scaling Guide
 
 ## Scaling Guide
 

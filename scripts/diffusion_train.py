@@ -294,6 +294,16 @@ best_loss = float('inf')
 # Get model to compute FLOPs
 peak_flops = get_peak_flops("cuda" if torch.cuda.is_available() else "unknown")
 
+# Resume from checkpoint if requested
+if args.resume:
+    result = load_checkpoint(model, optimizer, step=args.resume, model_name=args.model, phase="train")
+    if result[0] is not None:
+        model, metadata = result
+        total_steps = metadata.get("step", 0) if metadata else 0
+        print0(f"Resumed from step {total_steps}")
+    else:
+        print0(f"Could not resume from '{args.resume}', starting from scratch")
+
 # Check if we should just evaluate
 if args.eval_only:
     print0("Running evaluation only...")
@@ -462,9 +472,10 @@ print0("=" * 80)
 
 # Save final checkpoint (skip if save_every > num_iterations — benchmark mode)
 if args.save_every <= args.num_iterations:
+    final_loss_val = losses[-1].item() if hasattr(losses[-1], 'item') else float(losses[-1])
     save_checkpoint(
-        model, optimizer, total_steps, losses[-1].item(),
-        {"final_loss": losses[-1]},
+        model, optimizer, total_steps, final_loss_val,
+        {"final_loss": final_loss_val},
         model_name=args.model,
         phase="train"
     )

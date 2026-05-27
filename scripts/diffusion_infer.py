@@ -33,7 +33,7 @@ def setup_model(model_name="diffusion", checkpoint_dir="", device="cuda", **kwar
         model, tokenizer = load_model(
             model_name=model_name,
             device=device,
-            phase="eval",
+            phase="train",  # Training saves checkpoints to train/ phase
             checkpoint_dir=checkpoint_dir,
             **kwargs
         )
@@ -43,7 +43,7 @@ def setup_model(model_name="diffusion", checkpoint_dir="", device="cuda", **kwar
         model, tokenizer = load_model(
             model_name=model_name,
             device=device,
-            phase="eval",
+            phase="train",  # Training saves checkpoints to train/ phase
             checkpoint_dir=checkpoint_dir,
             **kwargs
         )
@@ -56,12 +56,14 @@ def setup_model(model_name="diffusion", checkpoint_dir="", device="cuda", **kwar
 
 def diffusion_sampling(model, prompt, max_tokens=128, temperature=1.0, top_k=40, num_steps=20,
                        tokenizer=None):
-    """Generate text using diffusion sampling from a prompt."""
+    """Generate text using progressive diffusion denoising from a prompt."""
+    from nanochat_diffusion.diffusion_scheduler import generate_unmask_schedule
     from nanochat_diffusion.tokenizer import UNK_TOKEN_ID
     
     device = model.get_device()
     config = model.config
     unk_id = config.unk_token_id
+    num_diffusion_steps = config.num_diffusion_steps
     
     # Encode prompt to tokens
     if isinstance(prompt, str):
@@ -72,55 +74,77 @@ def diffusion_sampling(model, prompt, max_tokens=128, temperature=1.0, top_k=40,
     else:
         prompt_tokens = list(prompt)
     
-    # Start with all UNK tokens
+    # Start with all UNK tokens, fill in prompt
     seq_len = max_tokens + len(prompt_tokens)
-    current_tokens = torch.full(
-        (1, seq_len),
-        unk_id,
-        dtype=torch.long,
-        device=device
+    current_tokens = torch.full((1, seq_len), unk_id, dtype=torch.long, device=device)
+    current_tokens[0, :len(prompt_tokens)] = torch.tensor(prompt_tokens, device=device)
+    
+    # Track which positions are already determined (prompt stays, UNK to fill)
+    is_determined = torch.zeros(1, seq_len, dtype=torch.bool, device=device)
+    is_determined[0, :len(prompt_tokens)] = True
+    
+    # Timestep schedule: decreasing from max_steps to 0
+    t_schedule = torch.linspace(
+        num_diffusion_steps - 1, 0, num_steps, dtype=torch.long, device=device
     )
     
-    # Fill in the prompt at the beginning
-    for i, tok in enumerate(prompt_tokens):
-        current_tokens[0, i] = tok
+    # Fraction of remaining UNK to fill per step
+    unmask_schedule = generate_unmask_schedule(num_steps=num_steps)
     
-    print0(f"Starting diffusion sampling from UNK (seq_len={seq_len}, steps={num_steps})")
+    # Token IDs to never sample: BOS(0) was ignore_index during training,
+    # and UNK(32767) would cause infinite loop
+    forbidden_ids = {0, unk_id}
     
-    # Progressive denoising
+    print0(f"Diffusion sampling: seq_len={seq_len}, prompt_len={len(prompt_tokens)}, steps={num_steps}")
     history = []
+    
     for step in range(num_steps):
-        print0(f"Step {step + 1}/{num_steps}", end="\r")
+        t = t_schedule[step].unsqueeze(0)  # (1,)
         
-        # Forward pass to get logits for UNK positions
+        # Forward pass with timestep conditioning
         with torch.no_grad():
-            logits = model(current_tokens)
+            logits = model(current_tokens, t=t)
         
-        # Get logits for UNK positions
-        unk_mask = (current_tokens[0] == unk_id).bool()
-        unk_positions = torch.where(unk_mask)[0]
+        # Find undetermined positions
+        undetermined = (~is_determined[0]).bool()
+        unk_positions = torch.where(undetermined)[0]
         
         if len(unk_positions) == 0:
             print0("\nAll tokens determined!")
             break
         
-        # Sample for each UNK position
-        for pos in unk_positions:
-            logit = logits[0, pos]
+        # How many to unmask this step (at least 1)
+        unmask_frac = unmask_schedule[step]
+        num_to_unmask = max(1, int(len(unk_positions) * unmask_frac))
+        
+        # Randomly pick which undetermined positions to fill this step
+        perm = torch.randperm(len(unk_positions), device=device)
+        chosen_positions = unk_positions[perm[:num_to_unmask]]
+        
+        # Sample tokens for chosen positions
+        for pos in chosen_positions:
+            logit = logits[0, pos].clone()
+            # Zero out forbidden token IDs so the model can't predict them
+            for fid in forbidden_ids:
+                if fid < len(logit):
+                    logit[fid] = -1e10
             if temperature > 0:
                 logit = logit / temperature
                 if top_k > 0:
-                    top_k_values, _ = torch.topk(logit, min(top_k, logit.size(-1)))
-                    min_val = top_k_values[-1]
-                    mask = logit < min_val
-                    logit = logit.masked_fill(mask, -1e10)
+                    vals, _ = torch.topk(logit, min(top_k, logit.size(-1)))
+                    logit[logit < vals[-1]] = -1e10
                 probs = F.softmax(logit, dim=-1)
-                next_token = torch.multinomial(probs, 1).item()
+                if probs.sum() > 0:
+                    next_token = torch.multinomial(probs, 1).item()
+                else:
+                    next_token = torch.argmax(logits[0, pos]).item()
             else:
                 next_token = torch.argmax(logit).item()
-        
             current_tokens[0, pos] = next_token
+            is_determined[0, pos] = True
         
+        filled = is_determined.sum().item()
+        print0(f"  Step {step+1}/{num_steps} (t={t.item():4d}): {filled}/{seq_len} tokens determined")
         history.append(current_tokens[0].clone())
     
     print()
@@ -246,6 +270,7 @@ def main():
     model, tokenizer = setup_model(
         model_name=args.model,
         checkpoint_dir=args.checkpoint_dir,
+        checkpoint_step=args.checkpoint_step,
         device=device
     )
     
