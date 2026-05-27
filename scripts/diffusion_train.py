@@ -74,6 +74,7 @@ parser.add_argument("--beta2", type=float, default=0.95, help="AdamW beta2")
 parser.add_argument("--eval-iters", type=int, default=100, help="eval every N steps")
 parser.add_argument("--eval-only", action="store_true", help="just evaluate and exit")
 parser.add_argument("--eval-init-only", action="store_true", help="initial eval only, no training")
+parser.add_argument("--eval-batches", type=int, default=50, help="number of batches to evaluate per eval pass")
 parser.add_argument("--save-every", type=int, default=1000, help="save checkpoint every N steps")
 parser.add_argument("--resume", type=str, default="", help="resume from checkpoint step")
 
@@ -392,7 +393,13 @@ for epoch in range(num_epochs):
             
             with torch.no_grad():
                 eval_dataloader = get_dataloader("eval")
-                for eval_step, (eval_inputs, eval_targets) in enumerate(eval_dataloader):
+                # Eval loop: cap at --eval-batches so it doesn't run forever
+                for eval_step in range(args.eval_batches):
+                    try:
+                        eval_inputs, eval_targets = next(iter(eval_dataloader))
+                    except StopIteration:
+                        break
+                    
                     if args.model == "diffusion":
                         t_eval = torch.zeros(eval_inputs.shape[0], device=device)
                         masked_eval = model.mask_tokens(eval_inputs, t_eval)
