@@ -313,154 +313,81 @@ if args.eval_only:
 
 # Training loop
 model.train()
-num_epochs = 3  # For demo, use fixed epochs
 losses = []
 eval_losses = []
 scaler = torch.amp.GradScaler('cuda') if device_type == 'cuda' else None
 
-for epoch in range(num_epochs):
-    print0(f"Epoch {epoch + 1}/{num_epochs}")
+# Single dataloader (no epoch loop)
+dataloader = get_dataloader("train")
+
+# Pre-generate timesteps for all steps
+all_t = torch.randint(0, args.num_diffusion_steps, (args.num_iterations, args.device_batch_size), device=device)
+
+for step_idx, (input_tokens, target_tokens) in enumerate(dataloader):
+    total_steps += 1
+    if total_steps == 1 or total_steps == 6:
+        print0(f"Step {total_steps}: batch shape={input_tokens.shape}")
     
-    # Create dataloader for this epoch
-    dataloader = get_dataloader("train")
+    inputs, targets = input_tokens, target_tokens
+    B, T = inputs.shape
     
-    for step_idx, (input_tokens, target_tokens) in enumerate(dataloader):
-        total_steps += 1
-        if total_steps == 1 or total_steps == 6:
-            print0(f"Step {total_steps}: receiving batch, shape={input_tokens.shape}")
+    # Use pre-generated timestep
+    t = all_t[min(step_idx, args.num_iterations - 1), :B]
+    
+    if args.model == "diffusion":
+        # Mask tokens at this noise level
+        masked_tokens = model.mask_tokens(inputs, t)
         
-        # Prepare batch (dataloader yields (inputs, targets) tuples)
-        if args.model == "diffusion":
-            # For diffusion LLM:
-            # - Sample random timestep
-            # - Mask tokens at that noise level
-            # - Forward pass with masked input
-            # - Compute loss on unmasked positions
-            
-            inputs, targets = input_tokens, target_tokens
-            B, T = inputs.shape
-            
-            # Sample random timestep for this batch
-            t = torch.randint(0, args.num_diffusion_steps, (B,), device=device)
-            
-            # Mask tokens at this noise level
-            masked_tokens = model.mask_tokens(inputs, t)
-            
-            # Forward pass (autocast for fp16 tensor cores on Ampere)
-            if scaler is not None:
-                with torch.amp.autocast('cuda', dtype=torch.float16):
-                    loss = model(masked_tokens, t=t, targets=targets)
-            else:
+        # Forward pass
+        if scaler is not None:
+            with torch.amp.autocast('cuda', dtype=torch.float16):
                 loss = model(masked_tokens, t=t, targets=targets)
-            
-            # Backward pass
-            if scaler is not None:
-                scaler.scale(loss).backward()
-            else:
-                loss.backward()
-            
-            # Gradient clipping
-            if scaler is not None:
-                scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            
-            # Optimizer step
-            if scaler is not None:
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                optimizer.step()
-            optimizer.zero_grad()
-            
-            # Store loss (detach to avoid graph retention, .item() only at print time)
-            losses.append(loss.detach())
-            
         else:
-            # Standard GPT forward pass
-            targets = inputs[:, 1:]  # Next token
-            inputs = inputs[:, :-1]
-            
-            logits = model(inputs)
-            loss = torch.nn.functional.cross_entropy(
-                logits.view(-1, logits.size(-1)),
-                targets.view(-1),
-                ignore_index=0  # Ignore BOS
-            )
-            
+            loss = model(masked_tokens, t=t, targets=targets)
+        
+        # Backward pass
+        if scaler is not None:
+            scaler.scale(loss).backward()
+        else:
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        
+        # Optimizer step
+        if scaler is not None:
+            scaler.unscale_(optimizer)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
             optimizer.step()
-            optimizer.zero_grad()
-            
-            losses.append(loss.detach())
+        optimizer.zero_grad(set_to_none=True)
         
-        # Compute average loss every step so it's always available
-        avg_loss = sum(losses[-10:]) / min(10, len(losses))
-        # Print progress only every 10 steps
-        if total_steps % 10 == 0:
-            print0(f"Step {total_steps}: loss = {avg_loss.item():.4f}, "
-                   f"lr = {optimizer.param_groups[0]['lr']:.6f}")
+        losses.append(loss.detach())
+            
+    else:
+        # Standard GPT forward pass
+        targets = inputs[:, 1:]
+        inputs = inputs[:, :-1]
         
-        # Save checkpoint
-        if total_steps % args.save_every == 0:
-            print0(f"Saving checkpoint at step {total_steps}")
-            save_checkpoint(
-                model, optimizer, total_steps, loss.item(),
-                {"loss": loss.item(), "avg_loss": avg_loss.item()},
-                model_name=args.model,
-                phase="train"
-            )
+        logits = model(inputs)
+        loss = torch.nn.functional.cross_entropy(
+            logits.view(-1, logits.size(-1)),
+            targets.view(-1),
+            ignore_index=0
+        )
         
-        # Evaluate
-        if total_steps % args.eval_iters == 0:
-            model.eval()
-            eval_losses_epoch = []
-            
-            with torch.no_grad():
-                eval_dataloader = get_dataloader("eval")
-                # Eval loop: cap at --eval-batches so it doesn't run forever
-                for eval_step in range(args.eval_batches):
-                    try:
-                        eval_inputs, eval_targets = next(iter(eval_dataloader))
-                    except StopIteration:
-                        break
-                    
-                    if args.model == "diffusion":
-                        t_eval = torch.zeros(eval_inputs.shape[0], device=device)
-                        masked_eval = model.mask_tokens(eval_inputs, t_eval)
-                        eval_loss = model(masked_eval, t=t_eval, targets=eval_targets)
-                    else:
-                        eval_logits = model(eval_inputs)
-                        eval_loss = torch.nn.functional.cross_entropy(
-                            eval_logits.view(-1, eval_logits.size(-1)),
-                            eval_targets.view(-1),
-                            ignore_index=0
-                        )
-                    
-                    eval_losses_epoch.append(eval_loss.item())
-            
-            eval_loss = sum(eval_losses_epoch) / len(eval_losses_epoch)
-            print0(f"Eval step {total_steps}: loss = {eval_loss:.4f}")
-            
-            eval_losses.append({
-                'step': total_steps,
-                'loss': eval_loss,
-            })
-            
-            # Log to wandb (use hasattr for compatibility across wandb versions)
-            if hasattr(wandb_run, 'log'):
-                wandb_run.log({
-                    'eval_loss': eval_loss,
-                    'train_loss': avg_loss.item(),
-                    'step': total_steps,
-                })
-            
-            model.train()
+        loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
         
-        # Check if we've reached target iterations
-        if args.num_iterations > 0 and total_steps >= args.num_iterations:
-            break
+        losses.append(loss.detach())
     
+    # Compute average loss every step so it's always available
+    avg_loss = sum(losses[-10:]) / min(10, len(losses))
+    
+    if total_steps % 50 == 0:
+        print0(f"Step {total_steps}: loss = {avg_loss.item():.4f}, "
+               f"lr = {optimizer.param_groups[0]['lr']:.6f}")
+    
+    # Check if we've reached target iterations
     if args.num_iterations > 0 and total_steps >= args.num_iterations:
         break
 

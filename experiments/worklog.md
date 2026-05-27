@@ -16,7 +16,11 @@
 | Best | TBD |
 
 ## Key Insights
-(None yet)
+- GB10 baseline: 17.785s — roughly on par with RTX A2000 best (16.985s), despite cc12.1 warning
+- Loss converges well: 2.639 final
 
 ## Next Ideas
-- Run baseline on GB10
+- Check if torch.compile works (might hit cc12.1 issues)
+- Try disabling wandb import entirely
+- Try reducing dataloader parallelism (oversubscription with 20 threads on 20-core system)
+- Try bf16 if supported (cc12.1 should support it)
