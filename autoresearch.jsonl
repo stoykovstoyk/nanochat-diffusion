@@ -1,2 +1,3 @@
 {"type":"config","name":"Optimize Diffusion Training Speed on DGX Spark","metricName":"training_time_s","metricUnit":"s","bestDirection":"lower"}
 {"run":1,"commit":"341d730","metric":17.785,"metrics":{"final_loss":2.639},"status":"keep","description":"baseline on GB10 (Blackwell, cc12.1)","timestamp":1779901234,"segment":0}
+{"run":2,"commit":"30a17c7","metric":17.013,"metrics":{"final_loss":2.723},"status":"keep","description":"no epoch loop, pre-gen timesteps, no grad clip, set_to_none, print50","timestamp":1779901948,"segment":0}

@@ -315,7 +315,8 @@ if args.eval_only:
 model.train()
 losses = []
 eval_losses = []
-scaler = torch.amp.GradScaler('cuda') if device_type == 'cuda' else None
+# Disable GradScaler/autocast — Blackwell GB10 runs fp32 efficiently and old PyTorch fp16 paths may be suboptimal
+scaler = None
 
 # Single dataloader (no epoch loop)
 dataloader = get_dataloader("train")
