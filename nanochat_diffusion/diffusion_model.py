@@ -330,7 +330,7 @@ class DiffusionModel(nn.Module):
         logits = self.gpt.lm_head(x)
         logits = logits[..., :self.config.vocab_size]
         logits = logits.float()
-        logits = 15.0 * torch.tanh(logits / 15.0)
+        logits = F.hardtanh(logits, -15.0, 15.0)
 
         if targets is not None:
             loss = F.cross_entropy(

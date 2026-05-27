@@ -1,1 +1,2 @@
 {"type":"config","name":"Optimize Diffusion Training Speed","metricName":"training_time_s","metricUnit":"s","bestDirection":"lower"}
+{"run":1,"commit":"c4ffbb3","metric":118.634,"metrics":{},"status":"keep","description":"baseline","timestamp":1779871221,"segment":0}
