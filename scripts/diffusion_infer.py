@@ -54,7 +54,8 @@ def setup_model(model_name="diffusion", checkpoint_dir="", device="cuda", **kwar
     return model, tokenizer
 
 
-def diffusion_sampling(model, prompt, max_tokens=128, temperature=1.0, top_k=40, num_steps=20):
+def diffusion_sampling(model, prompt, max_tokens=128, temperature=1.0, top_k=40, num_steps=20,
+                       tokenizer=None):
     """Generate text using diffusion sampling from a prompt."""
     from nanochat_diffusion.tokenizer import UNK_TOKEN_ID
     
@@ -63,9 +64,13 @@ def diffusion_sampling(model, prompt, max_tokens=128, temperature=1.0, top_k=40,
     unk_id = config.unk_token_id
     
     # Encode prompt to tokens
-    prompt_tokens = prompt.encode("utf-8") if isinstance(prompt, str) else prompt
     if isinstance(prompt, str):
-        prompt_tokens = [ord(c) for c in prompt]
+        if tokenizer is not None:
+            prompt_tokens = tokenizer.encode(prompt, prepend=False)
+        else:
+            prompt_tokens = [b for b in prompt.encode('utf-8')]
+    else:
+        prompt_tokens = list(prompt)
     
     # Start with all UNK tokens
     seq_len = max_tokens + len(prompt_tokens)
@@ -122,7 +127,8 @@ def diffusion_sampling(model, prompt, max_tokens=128, temperature=1.0, top_k=40,
     return current_tokens[0], history
 
 
-def autoregressive_generate(model, prompt, max_tokens=128, temperature=1.0, top_k=40):
+def autoregressive_generate(model, prompt, max_tokens=128, temperature=1.0, top_k=40,
+                            tokenizer=None):
     """Generate text using standard autoregressive approach."""
     from nanochat_diffusion.tokenizer import UNK_TOKEN_ID
     
@@ -130,7 +136,10 @@ def autoregressive_generate(model, prompt, max_tokens=128, temperature=1.0, top_
     config = model.config
     
     if isinstance(prompt, str):
-        prompt_tokens = [ord(c) for c in prompt]
+        if tokenizer is not None:
+            prompt_tokens = tokenizer.encode(prompt, prepend=False)
+        else:
+            prompt_tokens = [b for b in prompt.encode('utf-8')]
     else:
         prompt_tokens = list(prompt)
     
@@ -256,7 +265,8 @@ def main():
                 max_tokens=args.max_tokens,
                 temperature=args.temperature,
                 top_k=args.top_k,
-                num_steps=args.num_steps
+                num_steps=args.num_steps,
+                tokenizer=tokenizer
             )
             
             decoded = tokenizer.decode(generated.tolist())
@@ -270,7 +280,8 @@ def main():
                 model, args.prompt,
                 max_tokens=args.max_tokens,
                 temperature=args.temperature,
-                top_k=args.top_k
+                top_k=args.top_k,
+                tokenizer=tokenizer
             )
             
             decoded = tokenizer.decode(generated)

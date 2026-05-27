@@ -58,8 +58,11 @@ class Tokenizer:
     def decode(self, tokens):
         """Decode token IDs to text"""
         if isinstance(tokens, (list, np.ndarray)):
-            return bytes(tokens).decode('utf-8', errors='ignore')
-        return bytes([tokens]).decode('utf-8', errors='ignore')
+            # Clamp out-of-range values for byte-level decoding
+            clamped = [t if 0 <= t < 256 else 0 for t in tokens]
+            return bytes(clamped).decode('utf-8', errors='ignore')
+        t = tokens if 0 <= tokens < 256 else 0
+        return bytes([t]).decode('utf-8', errors='ignore')
 
     def get_bos_token_id(self):
         return 0

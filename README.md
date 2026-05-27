@@ -43,7 +43,7 @@ A diffusion-based language model framework built on top of [karpathy/nanochat](h
 ```
 nanochat_diffusion/
 ├── __init__.py                    # Package init
-├── common.py                      # Utilities, DDP setup, print0
+├── common.py                      # Utilities, DDP setup, print0, dtype detection
 ├── gpt.py                        # GPT transformer architecture (from nanochat)
 ├── optim.py                      # AdamW optimizer (from nanochat)
 ├── tokenizer.py                  # BPE tokenizer (from nanochat)
@@ -57,7 +57,12 @@ nanochat_diffusion/
 ├── diffusion_scheduler.py        # Noise schedules (linear, cosine, etc.)
 ├── diffusion_sampler.py          # Progressive denoising sampler
 ├── tasks.py                      # Evaluation tasks (gsm8k, mmlu, arc, etc.)
-├── runs/train_diffusion.sh       # Automated training script
+├── runs/
+│   ├── autoresearch.sh           # Speed benchmark script
+│   ├── autoresearch.md           # Benchmark experiment config
+│   ├── autoresearch.jsonl        # Experiment run log
+│   ├── experiments/worklog.md    # Detailed experiment log
+│   └── train_diffusion.sh        # Automated training script
 ├── scripts/
 │   ├── diffusion_train.py        # Main training entry
 │   ├── diffusion_infer.py        # Inference/generation entry
@@ -76,7 +81,7 @@ nanochat_diffusion/
 ### 1. Install dependencies
 
 ```bash
-# Clone nanochat (base)
+# Clone the repo
 git clone https://github.com/karpathy/nanochat.git
 cd nanochat
 
@@ -85,15 +90,21 @@ uv sync --extra gpu          # CUDA (A100/H100/etc.)
 source .venv/bin/activate
 ```
 
+The nanochat-diffusion code lives inside the nanochat repo as `scripts/` and `nanochat_diffusion/`.
+
 ### 2. Train a diffusion model
 
 ```bash
-# Simple training on CPU
-python -m scripts.diffusion_train
+# Simple training on CPU (small model, ~2 min)
+python -m scripts.diffusion_train \
+    --depth=8 \
+    --max-seq-len=256 \
+    --device-batch-size=8 \
+    --num-iterations=100
 
-# Training with GPU (8x H100)
-OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 \
-    -m scripts.diffusion_train \
+# Training on GPU
+python -m scripts.diffusion_train \
+    --device-type=cuda \
     --depth=8 \
     --aspect-ratio=64 \
     --max-seq-len=1024 \
@@ -102,25 +113,58 @@ OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 \
     --warmup-iters=100 \
     --num-diffusion-steps=1000 \
     --max-mask-ratio=0.8 \
-    --noise-schedule=linear \
-    --unk-token-id=32767 \
-    --vocab-size=32768
+    --num-iterations=500
+
+# Training with torch.compile (GPU recommended)
+python -m scripts.diffusion_train \
+    --device-type=cuda \
+    --depth=12 \
+    --max-seq-len=1024 \
+    --device-batch-size=16 \
+    --compile \
+    --num-iterations=1000
 ```
 
 ### 3. Generate text with diffusion sampling
 
 ```bash
-# CLI generation
-python -m scripts.diffusion_infer --prompt "Hello world" --model diffusion
+# Diffusion denoising from prompt
+python -m scripts.diffusion_infer \
+    --model diffusion \
+    --prompt "Hello world" \
+    --max-tokens 64 \
+    --temperature 0.8 \
+    --mode diffusion
 
-# Web UI
-python -m scripts.chat_web
+# Autoregressive generation
+python -m scripts.diffusion_infer \
+    --model diffusion \
+    --prompt "Once upon a time" \
+    --max-tokens 128 \
+    --mode autoregressive
 ```
 
 ### 4. Evaluate the model
 
 ```bash
 python -m scripts.diffusion_evaluate --model diffusion --tasks gsm8k,arc
+```
+
+### 5. Speedrun benchmark
+
+A 100-iteration benchmark that measures training throughput (useful after code changes):
+
+```bash
+# CPU benchmark
+python -m scripts.diffusion_train \
+    --depth=8 --max-seq-len=256 --device-batch-size=8 \
+    --num-iterations=100 --save-every=999999
+
+# GPU benchmark (RTX A2000: ~17s)
+python -m scripts.diffusion_train \
+    --device-type=cuda \
+    --depth=8 --max-seq-len=256 --device-batch-size=8 \
+    --num-iterations=100 --save-every=999999
 ```
 
 ---
@@ -135,7 +179,7 @@ python -m scripts.diffusion_evaluate --model diffusion --tasks gsm8k,arc
 |---|---|---|
 | `--run` | `diffusion_demo` | W&B run name |
 | `--model` | `diffusion` | Model type: `diffusion` or `gpt` |
-| `--device` | `cuda` | Device to train on |
+| `--device-type` | `auto` | Device to train on: `cuda`, `cpu`, `mps` (empty = autodetect) |
 | `--depth` | `8` | Transformer depth (number of layers) |
 | `--aspect-ratio` | `64` | Aspect ratio for computing model dimension (`n_embd = depth * aspect_ratio`) |
 | `--max-seq-len` | `1024` | Maximum sequence length |
@@ -161,39 +205,40 @@ python -m scripts.diffusion_evaluate --model diffusion --tasks gsm8k,arc
 || `--resume` | `""` | Resume from checkpoint step |
 || `--num-cpus` | `all` | Number of CPU cores to use for tokenization (integer or `all`) |
 
-**Example — Quick experiment:**
+**Example — Quick experiment (single GPU):**
 
 ```bash
-OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=2 \
-    -m scripts.diffusion_train \
+python -m scripts.diffusion_train \
+    --device-type=cuda \
     --depth=4 \
     --max-seq-len=256 \
     --device-batch-size=8 \
     --num-diffusion-steps=500 \
     --max-mask-ratio=0.6 \
-    --noise-schedule=coshine \
+    --noise-schedule=cosine \
     --lr=1e-3 \
+    --num-iterations=200 \
     --eval-iters=50 \
-    --save-every=200 \
+    --save-every=500 \
     --run="d4_test"
 ```
 
-**Example — Full training (GPT-2 capability):**
+**Example — Medium training (single GPU, depth=12):**
 
 ```bash
-OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 \
-    -m scripts.diffusion_train \
-    --depth=26 \
+python -m scripts.diffusion_train \
+    --device-type=cuda \
+    --depth=12 \
     --aspect-ratio=64 \
-    --max-seq-len=2048 \
-    --device-batch-size=32 \
+    --max-seq-len=1024 \
+    --device-batch-size=16 \
     --lr=3e-4 \
     --warmup-iters=200 \
     --num-diffusion-steps=1000 \
     --max-mask-ratio=0.85 \
     --noise-schedule=linear \
     --vocab-size=32768 \
-    --run="d26_diffusion" \
+    --run="d12_diffusion" \
     --save-every=500 \
     --eval-iters=100
 ```
@@ -201,9 +246,8 @@ OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 \
 **Resuming from checkpoint:**
 
 ```bash
-OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 \
-    -m scripts.diffusion_train \
-    --depth=26 \
+python -m scripts.diffusion_train \
+    --device-type=cuda \
     --resume=step_000000500  # or --resume=latest
 ```
 
@@ -391,12 +435,25 @@ Run both modes side by side for comparison. Useful for benchmarking.
 
 ---
 
-## Checkpoint Format
+## Checkpoints & Model Storage
 
-Checkpoints are saved at `runs/checkpoints/<model_name>/<phase>/`:
+### Location
+
+Checkpoints are saved to:
 
 ```
-runs/checkpoints/diffusion/train/
+~/.cache/nanochat_diffusion/checkpoints/<model_name>/<phase>/
+```
+
+| Level | Meaning |
+|-------|---------|
+| `<model_name>` | Set by `--model` (default: `diffusion`). Currently supports `diffusion` or `gpt`. |
+| `<phase>` | `train` during training, `eval` during inference/resumption. |
+
+Example structure:
+
+```
+~/.cache/nanochat_diffusion/checkpoints/diffusion/train/
 ├── step_000000001/
 │   ├── model.pt           # Model weights
 │   ├── config.json         # Architecture config
@@ -408,11 +465,41 @@ runs/checkpoints/diffusion/train/
     └── ...
 ```
 
-**Resuming:**
+### Custom base directory
+
+Override the default `~/.cache/nanochat_diffusion` location by setting the environment variable:
+
 ```bash
---resume=latest          # Resume from most recent
---resume=step_000000500  # Resume from specific step
+export NANOCHAT_BASE_DIR=/path/to/my/checkpoints
 ```
+
+After this, checkpoints will be stored at `/path/to/my/checkpoints/checkpoints/<model_name>/<phase>/`.
+
+### Resuming training
+
+```bash
+python -m scripts.diffusion_train \
+    --model diffusion \
+    --resume=latest          # Resume from most recent checkpoint
+
+python -m scripts.diffusion_train \
+    --model diffusion \
+    --resume=step_000000500  # Resume from a specific step
+```
+
+### Inference
+
+The same checkpoint path scheme is used during inference (`phase=eval`):
+
+```bash
+python -m scripts.diffusion_infer \
+    --model diffusion \
+    --prompt "Hello world" \
+    --max-tokens 64 \
+    --mode diffusion
+```
+
+This loads the latest checkpoint from `~/.cache/nanochat_diffusion/checkpoints/diffusion/eval/`.
 
 ---
 
@@ -588,15 +675,20 @@ sequence = current_tokens  # All positions filled
 
 ---
 
-## Running the Speedrun Script
+## Benchmark Script
 
-Automated training run:
+A quick 100-iteration benchmark to validate training throughput after code changes:
 
 ```bash
-bash runs/train_diffusion.sh
-```
+# Runs the autoresearch benchmark (CPU)
+bash runs/autoresearch.sh
 
-This runs the full training pipeline with default hyperparameters for GPT-2 capability. Monitor with W&B.
+# Or directly:
+python -m scripts.diffusion_train \
+    --depth=8 --max-seq-len=256 --device-batch-size=8 \
+    --num-iterations=100 --save-every=999999 \
+    --run="benchmark"
+```
 
 ---
 

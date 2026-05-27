@@ -336,7 +336,7 @@ for epoch in range(num_epochs):
             # Mask tokens at this noise level
             masked_tokens = model.mask_tokens(inputs, t)
             
-            # Forward pass (with autocast for fp16 on GPU)
+            # Forward pass (autocast for fp16 tensor cores on Ampere)
             if scaler is not None:
                 with torch.amp.autocast('cuda', dtype=torch.float16):
                     loss = model(masked_tokens, t=t, targets=targets)
@@ -370,29 +370,16 @@ for epoch in range(num_epochs):
             targets = inputs[:, 1:]  # Next token
             inputs = inputs[:, :-1]
             
-            if scaler is not None:
-                with torch.amp.autocast('cuda', dtype=torch.float16):
-                    logits = model(inputs)
-            else:
-                logits = model(inputs)
+            logits = model(inputs)
             loss = torch.nn.functional.cross_entropy(
                 logits.view(-1, logits.size(-1)),
                 targets.view(-1),
                 ignore_index=0  # Ignore BOS
             )
             
-            if scaler is not None:
-                scaler.scale(loss).backward()
-            else:
-                loss.backward()
-            if scaler is not None:
-                scaler.unscale_(optimizer)
+            loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            if scaler is not None:
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                optimizer.step()
+            optimizer.step()
             optimizer.zero_grad()
             
             losses.append(loss.detach())

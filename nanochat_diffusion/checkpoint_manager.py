@@ -151,9 +151,22 @@ def load_checkpoint(model, optimizer=None, step="latest", model_name="base", pha
     return model, None
 
 def load_model(model_name="base", device="cuda", phase="eval", **kwargs):
-    """Factory function to load model and optionally tokenizer"""
+    """Factory function to load model and optionally tokenizer.
+    
+    Only kwargs that are valid DiffusionConfig fields are passed to the config;
+    operational kwargs like checkpoint_dir, checkpoint_step are extracted first.
+    """
     from nanochat_diffusion.diffusion_model import DiffusionModel, DiffusionConfig
     from nanochat_diffusion.tokenizer import Tokenizer
+    from dataclasses import fields
+    
+    # Extract operational kwargs (not config fields)
+    checkpoint_dir = kwargs.pop("checkpoint_dir", None) or kwargs.pop("checkpoint_path", None)
+    checkpoint_step = kwargs.pop("checkpoint_step", "latest")
+    # Also remove any other non-config kwargs that might leak in
+    for key in list(kwargs):
+        if key not in {f.name for f in fields(DiffusionConfig)}:
+            kwargs.pop(key, None)
     
     # Create model
     config = DiffusionConfig(**kwargs)
@@ -162,8 +175,8 @@ def load_model(model_name="base", device="cuda", phase="eval", **kwargs):
     model.eval()
     
     # Load checkpoint if exists
-    if kwargs.get('checkpoint_path'):
-        load_checkpoint(model, model_name=model_name, phase=phase, step=kwargs.get('checkpoint_step', 'latest'))
+    if checkpoint_dir is not None and os.path.exists(checkpoint_dir):
+        load_checkpoint(model, model_name=model_name, phase=phase, step=checkpoint_step)
     
     # Create tokenizer
     tokenizer = Tokenizer(data_dir="", verbose=False)
