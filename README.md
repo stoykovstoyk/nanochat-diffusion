@@ -158,7 +158,8 @@ python -m scripts.diffusion_evaluate --model diffusion --tasks gsm8k,arc
 | `--target-param-data-ratio` | `12` | Target data:param ratio |
 | `--eval-iters` | `100` | Evaluate every N steps |
 | `--save-every` | `1000` | Save checkpoint every N steps |
-| `--resume` | `""` | Resume from checkpoint step |
+|| `--resume` | `""` | Resume from checkpoint step |
+|| `--num-cpus` | `all` | Number of CPU cores to use for tokenization (integer or `all`) |
 
 **Example — Quick experiment:**
 
