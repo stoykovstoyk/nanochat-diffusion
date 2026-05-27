@@ -5,6 +5,7 @@ Adapted from karpathy/nanochat.
 
 import os
 import json
+import time
 import torch
 from nanochat_diffusion.common import get_base_dir, print0
 from nanochat_diffusion.diffusion_model import DiffusionModel, DiffusionConfig
@@ -89,7 +90,7 @@ def save_checkpoint(model, optimizer, step, loss, metrics, model_name="base", ph
         'step': step,
         'loss': float(loss),
         'metrics': metrics or {},
-        'timestamp': torch.cuda.get_timestamp() if torch.cuda.is_available() else 0,
+        'timestamp': time.time(),
     }
     with open(os.path.join(checkpoint_path, "metadata.json"), "w") as f:
         json.dump(metadata, f, indent=2)
