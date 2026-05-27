@@ -422,8 +422,8 @@ for epoch in range(num_epochs):
                 'loss': eval_loss,
             })
             
-            # Log to wandb
-            if isinstance(wandb_run, wandb.wandb_run.Run):
+            # Log to wandb (use hasattr for compatibility across wandb versions)
+            if hasattr(wandb_run, 'log'):
                 wandb_run.log({
                     'eval_loss': eval_loss,
                     'train_loss': avg_loss,
