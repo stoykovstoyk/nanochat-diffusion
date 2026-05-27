@@ -306,6 +306,7 @@ model.train()
 num_epochs = 3  # For demo, use fixed epochs
 losses = []
 eval_losses = []
+scaler = torch.amp.GradScaler('cuda') if device_type == 'cuda' else None
 
 for epoch in range(num_epochs):
     print0(f"Epoch {epoch + 1}/{num_epochs}")
@@ -335,46 +336,72 @@ for epoch in range(num_epochs):
             # Mask tokens at this noise level
             masked_tokens = model.mask_tokens(inputs, t)
             
-            # Forward pass
-            loss = model(masked_tokens, t=t, targets=targets)
+            # Forward pass (with autocast for fp16 on GPU)
+            if scaler is not None:
+                with torch.amp.autocast('cuda', dtype=torch.float16):
+                    loss = model(masked_tokens, t=t, targets=targets)
+            else:
+                loss = model(masked_tokens, t=t, targets=targets)
             
             # Backward pass
-            loss.backward()
+            if scaler is not None:
+                scaler.scale(loss).backward()
+            else:
+                loss.backward()
             
             # Gradient clipping
+            if scaler is not None:
+                scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             
             # Optimizer step
-            optimizer.step()
+            if scaler is not None:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
             optimizer.zero_grad()
             
-            # Store loss
-            losses.append(loss.item())
+            # Store loss (detach to avoid graph retention, .item() only at print time)
+            losses.append(loss.detach())
             
         else:
             # Standard GPT forward pass
             targets = inputs[:, 1:]  # Next token
             inputs = inputs[:, :-1]
             
-            logits = model(inputs)
+            if scaler is not None:
+                with torch.amp.autocast('cuda', dtype=torch.float16):
+                    logits = model(inputs)
+            else:
+                logits = model(inputs)
             loss = torch.nn.functional.cross_entropy(
                 logits.view(-1, logits.size(-1)),
                 targets.view(-1),
                 ignore_index=0  # Ignore BOS
             )
             
-            loss.backward()
+            if scaler is not None:
+                scaler.scale(loss).backward()
+            else:
+                loss.backward()
+            if scaler is not None:
+                scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()
+            if scaler is not None:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
             optimizer.zero_grad()
             
-            losses.append(loss.item())
+            losses.append(loss.detach())
         
         # Compute average loss every step so it's always available
         avg_loss = sum(losses[-10:]) / min(10, len(losses))
         # Print progress only every 10 steps
         if total_steps % 10 == 0:
-            print0(f"Step {total_steps}: loss = {avg_loss:.4f}, "
+            print0(f"Step {total_steps}: loss = {avg_loss.item():.4f}, "
                    f"lr = {optimizer.param_groups[0]['lr']:.6f}")
         
         # Save checkpoint
@@ -382,7 +409,7 @@ for epoch in range(num_epochs):
             print0(f"Saving checkpoint at step {total_steps}")
             save_checkpoint(
                 model, optimizer, total_steps, loss.item(),
-                {"loss": loss.item(), "avg_loss": avg_loss},
+                {"loss": loss.item(), "avg_loss": avg_loss.item()},
                 model_name=args.model,
                 phase="train"
             )
@@ -427,7 +454,7 @@ for epoch in range(num_epochs):
             if hasattr(wandb_run, 'log'):
                 wandb_run.log({
                     'eval_loss': eval_loss,
-                    'train_loss': avg_loss,
+                    'train_loss': avg_loss.item(),
                     'step': total_steps,
                 })
             
@@ -443,13 +470,13 @@ for epoch in range(num_epochs):
 print0("=" * 80)
 print0("Training complete!")
 print0(f"Total steps: {total_steps}")
-print0(f"Final loss: {losses[-1]:.4f}")
+print0(f"Final loss: {losses[-1].item():.4f}")
 print0("=" * 80)
 
 # Save final checkpoint (skip if save_every > num_iterations — benchmark mode)
 if args.save_every <= args.num_iterations:
     save_checkpoint(
-        model, optimizer, total_steps, losses[-1],
+        model, optimizer, total_steps, losses[-1].item(),
         {"final_loss": losses[-1]},
         model_name=args.model,
         phase="train"
