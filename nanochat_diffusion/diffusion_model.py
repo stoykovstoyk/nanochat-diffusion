@@ -103,35 +103,24 @@ class SinusoidalTimestepEmbedding(nn.Module):
         self.act = nn.SiLU()
         self.linear_2 = nn.Linear(self.timestep_proj_dim, config.n_embd, bias=True)
 
+        # Precompute sinusoidal frequencies (device-agnostic, created on first forward)
+        half_dim = self.timestep_embed_dim // 2
+        freqs = torch.exp(
+            -torch.arange(half_dim, dtype=torch.float32) * (torch.log(torch.tensor(10000.0)) / (half_dim - 1))
+        )
+        self.register_buffer('emb_freq', freqs)
+
     def forward(self, t: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            t: Tensor of shape (B,) with timestep values [0, num_diffusion_steps]
-        Returns:
-            Tensor of shape (B, n_embd)
-        """
         device = t.device
         dtype = self.linear_1.weight.dtype
 
-        # Compute sinusoidal frequencies
-        half_dim = self.timestep_embed_dim // 2
-        emb = torch.log(torch.tensor(10000.0, dtype=torch.float32, device=device)) / (
-            half_dim - 1
-        )
-        # shape: (half_dim,)
-        emb_freq = torch.exp(
-            torch.arange(half_dim, device=device, dtype=torch.float32) * (-emb / half_dim)
-        )
-
         # Expand for batch: (B, half_dim)
         t = t.to(torch.float32)
-        emb = t.unsqueeze(-1) * emb_freq.unsqueeze(0)
+        half_dim = self.timestep_embed_dim // 2
+        emb = t.unsqueeze(-1) * self.emb_freq.unsqueeze(0).to(device=device, dtype=torch.float32)
 
         # Concat sin/cos
-        emb = torch.cat([emb.sin(), emb.cos()], dim=-1)
-
-        # Cast
-        emb = emb.to(dtype)
+        emb = torch.cat([emb.sin(), emb.cos()], dim=-1).to(dtype)
 
         # Project
         emb = self.linear_1(emb)
