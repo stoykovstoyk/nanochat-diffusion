@@ -27,3 +27,9 @@
 - What changed: Replaced `15.0 * torch.tanh(logits / 15.0)` with `F.hardtanh(logits, -15, 15)`
 - Result: training_time_s=110.615 (-6.8%), final_loss=0.885
 - Insight: tanh is expensive on CPU; hardtanh gives same logit bounding for free
+
+### Run 3: dead code removal + --num-cpus 1 — training_time_s=109.285 (KEEP)
+- Timestamp: 2026-05-27 11:57
+- What changed: Removed unused block_input/x_pre_mlp in diffusion forward; set --num-cpus 1
+- Result: training_time_s=109.285 (-7.9% vs baseline), final_loss=0.820
+- Insight: Reduced dataloader thread contention helps slightly on CPU

@@ -16,7 +16,7 @@ START_TIME=$(date +%s%N)
 cd "$PROJECT_DIR"
 $PYTHON -m scripts.diffusion_train \
     --num-cpus 1 \
-    --device-type cpu \
+    --device-type cuda \
     --depth 8 \
     --aspect-ratio 64 \
     --max-seq-len 256 \
