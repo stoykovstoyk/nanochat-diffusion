@@ -370,9 +370,10 @@ for epoch in range(num_epochs):
             
             losses.append(loss.item())
         
-        # Print progress
+        # Compute average loss every step so it's always available
+        avg_loss = sum(losses[-10:]) / min(10, len(losses))
+        # Print progress only every 10 steps
         if total_steps % 10 == 0:
-            avg_loss = sum(losses[-10:]) / min(10, len(losses))
             print0(f"Step {total_steps}: loss = {avg_loss:.4f}, "
                    f"lr = {optimizer.param_groups[0]['lr']:.6f}")
         
