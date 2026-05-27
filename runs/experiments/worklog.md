@@ -6,16 +6,24 @@
 - **Model:** depth=8, n_embd=512, seq_len=256, batch=8, CPU, 100 iterations
 
 ## Key Insights
-- (to be filled as experiments progress)
+- tanh logit softcap is expensive on CPU (~7% of training time); hardtanh is equivalent and free
+- OMP_NUM_THREADS=4 oversubscribes with 24 dataloader workers (150s vs 119s)
+- torch.compile crashes without setuptools; with it, compilation overhead dominates short benchmarks
 
 ## Next Ideas
-- (to be filled as experiments progress)
+- Remove redundant `logits.float()` cast (no-op on CPU)
+- Profile to find actual bottleneck ops
+- Avoid `norm(x)` calls duplication in diffusion forward pass
 
 ---
 
 ### Run 1: baseline — training_time_s=118.634 (KEEP)
 - Timestamp: 2026-05-27 11:38
-- What changed: Initial baseline run with depth=8, n_embd=512, CPU, 100 iters
+- What changed: Initial baseline run for training speed
 - Result: training_time_s=118.634, final_loss=0.965
-- Insight: Model converges well on synthetic data. Most time likely in forward/backward of transformer.
-- Next: Try torch.compile for CPU inference, or reduce OMP_NUM_THREADS / tune parallelism
+
+### Run 2: hardtanh instead of tanh — training_time_s=110.615 (KEEP)
+- Timestamp: 2026-05-27 11:49
+- What changed: Replaced `15.0 * torch.tanh(logits / 15.0)` with `F.hardtanh(logits, -15, 15)`
+- Result: training_time_s=110.615 (-6.8%), final_loss=0.885
+- Insight: tanh is expensive on CPU; hardtanh gives same logit bounding for free

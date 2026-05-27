@@ -15,6 +15,7 @@ START_TIME=$(date +%s%N)
 # 100 iterations, no checkpoint saving, no eval to keep benchmark fast
 cd "$PROJECT_DIR"
 $PYTHON -m scripts.diffusion_train \
+    --num-cpus 1 \
     --device-type cpu \
     --depth 8 \
     --aspect-ratio 64 \

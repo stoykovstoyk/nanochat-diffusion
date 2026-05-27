@@ -263,16 +263,7 @@ class DiffusionModel(nn.Module):
             if str(i) in self.gpt.value_embeds:
                 ve = self.gpt.value_embeds[str(i)](idx).to(x.dtype)
 
-            # Add timestep to block attention
-            if t_emb_for_attn is not None:
-                # Simple: concatenate timestep to input (B, T+1, n_embd)
-                t_emb_expanded = t_emb.unsqueeze(1).expand(-1, T, -1)
-                block_input = torch.cat([x, t_emb_expanded], dim=-1)
-            else:
-                block_input = x
-
             # Get attention components
-            layer_idx = i
             n_head = self.config.n_head
             n_kv_head = self.config.n_kv_head
             n_embd = self.config.n_embd
@@ -288,7 +279,7 @@ class DiffusionModel(nn.Module):
                 v = v + gate.unsqueeze(-1) * ve
 
             # Apply RoPE
-            cos, sin = self.gpt.cos[:, :, :, :], self.gpt.sin[:, :, :, :]
+            cos, sin = self.gpt.cos[:, :T], self.gpt.sin[:, :T]
             q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
             q, k = norm(q), norm(k)
             q = q * 1.2
@@ -305,7 +296,6 @@ class DiffusionModel(nn.Module):
             x = x + y
 
             # Add timestep to MLP
-            x_pre_mlp = x
             if t_emb_for_attn is not None:
                 x_mlp_in = x + self.timestep_mlp_proj(t_emb).unsqueeze(1)
             else:
