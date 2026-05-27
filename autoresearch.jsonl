@@ -2,3 +2,4 @@
 {"run":1,"commit":"341d730","metric":17.785,"metrics":{"final_loss":2.639},"status":"keep","description":"baseline on GB10 (Blackwell, cc12.1)","timestamp":1779901234,"segment":0}
 {"run":2,"commit":"30a17c7","metric":17.013,"metrics":{"final_loss":2.723},"status":"keep","description":"no epoch loop, pre-gen timesteps, no grad clip, set_to_none, print50","timestamp":1779901948,"segment":0}
 {"run":3,"commit":"e45c973","metric":12.051,"metrics":{"final_loss":2.723},"status":"keep","description":"disable GradScaler/fp16 autocast","timestamp":1779901986,"segment":0}
+{"run":4,"commit":"8e71934","metric":11.965,"metrics":{"final_loss":2.724},"status":"keep","description":"cache sinusoidal freq buffer in timestep embed","timestamp":1779902150,"segment":0}

@@ -384,9 +384,8 @@ class DiffusionModel(nn.Module):
         # Each token independently masked with probability ratio[i]
         mask = torch.rand(B, T, device=idx.device) < ratios.unsqueeze(1)
 
-        # Set masked positions to UNK_ID
-        masked_idx = idx.clone()
-        masked_idx[mask] = self.config.unk_token_id
+        # Set masked positions to UNK_ID (where avoids clone+scatter)
+        masked_idx = torch.where(mask, self.config.unk_token_id, idx)
 
         if return_mask:
             return masked_idx, mask
