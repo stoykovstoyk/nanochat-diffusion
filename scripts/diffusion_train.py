@@ -446,13 +446,14 @@ print0(f"Total steps: {total_steps}")
 print0(f"Final loss: {losses[-1]:.4f}")
 print0("=" * 80)
 
-# Save final checkpoint
-save_checkpoint(
-    model, optimizer, total_steps, losses[-1],
-    {"final_loss": losses[-1]},
-    model_name=args.model,
-    phase="train"
-)
+# Save final checkpoint (skip if save_every > num_iterations — benchmark mode)
+if args.save_every <= args.num_iterations:
+    save_checkpoint(
+        model, optimizer, total_steps, losses[-1],
+        {"final_loss": losses[-1]},
+        model_name=args.model,
+        phase="train"
+    )
 
 # Cleanup
 try:
