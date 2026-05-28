@@ -73,6 +73,7 @@ parser.add_argument("--fullgraph", action="store_true", help="use fullgraph=True
 parser.add_argument("--cudnn-benchmark", action="store_true", help="enable torch.backends.cudnn.benchmark")
 parser.add_argument("--custom-rmsnorm", action="store_true", help="use custom fused CUDA RMS norm kernel")
 parser.add_argument("--warmup-iters", type=int, default=50, help="warmup steps")
+parser.add_argument("--grad-clip", type=float, default=0.0, help="gradient clipping (0=disabled)")
 parser.add_argument("--lr", type=float, default=4e-4, help="base learning rate")
 parser.add_argument("--weight-decay", type=float, default=0.1, help="weight decay")
 parser.add_argument("--beta1", type=float, default=0.8, help="AdamW beta1")
@@ -215,6 +216,20 @@ optimizer = torch.optim.AdamW(
 )
 print0(f"Optimizer: AdamW with lr={args.lr}, weight_decay={args.weight_decay}")
 
+# LR scheduler: linear warmup + cosine decay
+total_iters = args.num_iterations
+warmup_iters = args.warmup_iters
+if total_iters > 0 and warmup_iters > 0:
+    def lr_lambda(step):
+        if step < warmup_iters:
+            return step / max(1, warmup_iters)
+        progress = (step - warmup_iters) / max(1, total_iters - warmup_iters)
+        return 0.5 * (1.0 + math.cos(math.pi * progress))
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    print0(f"LR scheduler: linear warmup {warmup_iters} -> cosine decay {total_iters}")
+else:
+    scheduler = None
+
 # -----------------------------------------------------------------------------
 # Setup wandb
 try:
@@ -302,9 +317,12 @@ for step_idx, (input_tokens, target_tokens) in enumerate(dataloader):
     loss = model(masked_tokens, t=t, targets=targets)
 
     loss.backward()
-
+    if args.grad_clip > 0:
+        torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
     optimizer.step()
     optimizer.zero_grad(set_to_none=True)
+    if scheduler:
+        scheduler.step()
 
     losses.append(loss.detach().clone())
 
