@@ -216,7 +216,7 @@ optimizer = torch.optim.AdamW(
 )
 print0(f"Optimizer: AdamW with lr={args.lr}, weight_decay={args.weight_decay}")
 
-# LR scheduler: linear warmup + cosine decay
+# LR scheduler: linear warmup + cosine decay (or constant after warmup for infinite)
 total_iters = args.num_iterations
 warmup_iters = args.warmup_iters
 if total_iters > 0 and warmup_iters > 0:
@@ -227,6 +227,12 @@ if total_iters > 0 and warmup_iters > 0:
         return 0.5 * (1.0 + math.cos(math.pi * progress))
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     print0(f"LR scheduler: linear warmup {warmup_iters} -> cosine decay {total_iters}")
+elif total_iters <= 0 and warmup_iters > 0:
+    # Infinite training: warmup then constant LR
+    def lr_lambda(step):
+        return min(1.0, step / max(1, warmup_iters))
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    print0(f"LR scheduler: linear warmup {warmup_iters} -> constant (infinite training)")
 else:
     scheduler = None
 
@@ -297,10 +303,9 @@ if args.compile:
 # Training loop
 model.train()
 losses = []
+best_loss = float('inf')
 
 dataloader = get_dataloader("train")
-
-all_t = torch.randint(0, args.num_diffusion_steps, (args.num_iterations, args.device_batch_size), device=device)
 
 for step_idx, (input_tokens, target_tokens) in enumerate(dataloader):
     total_steps += 1
@@ -310,7 +315,8 @@ for step_idx, (input_tokens, target_tokens) in enumerate(dataloader):
     inputs, targets = input_tokens, target_tokens
     B, T = inputs.shape
 
-    t = all_t[min(step_idx, args.num_iterations - 1), :B]
+    # Generate timestep on the fly (supports infinite training with num_iterations=-1)
+    t = torch.randint(0, args.num_diffusion_steps, (B,), device=device)
 
     masked_tokens = model.mask_tokens(inputs, t)
 
@@ -325,12 +331,23 @@ for step_idx, (input_tokens, target_tokens) in enumerate(dataloader):
         scheduler.step()
 
     losses.append(loss.detach().clone())
+    current_loss = losses[-1].item()
 
     avg_loss = sum(losses[-10:]) / min(10, len(losses))
 
     if total_steps % 50 == 0:
         print0(f"Step {total_steps}: loss = {avg_loss.item():.4f}, "
                f"lr = {optimizer.param_groups[0]['lr']:.6f}")
+
+    # Save every save_every steps if loss improved
+    if args.save_every > 0 and total_steps % args.save_every == 0 and current_loss < best_loss:
+        best_loss = current_loss
+        save_checkpoint(
+            model, optimizer, total_steps, current_loss,
+            {"final_loss": current_loss, "best_loss": best_loss},
+            model_name="diffusion",
+            phase="train"
+        )
 
     if args.num_iterations > 0 and total_steps >= args.num_iterations:
         break
