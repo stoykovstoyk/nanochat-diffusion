@@ -1,705 +1,334 @@
 # nanochat-diffusion
 
-A diffusion-based language model framework built on top of [karpathy/nanochat](https://github.com/karpathy/nanochat). Implements the Diffusion LLM (dLLM) paradigm: instead of autoregressive next-token prediction, the model masks tokens at various noise levels and learns to denoise them in parallel.
+A diffusion-based language model (dLLM) framework. Instead of autoregressive next-token prediction, the model masks tokens at various noise levels and learns to denoise them in parallel, enabling faster generation and flexible conditioning.
+
+Built on the GPT architecture from [karpathy/nanochat](https://github.com/karpathy/nanochat).
 
 ---
 
-## What This Does
+## How It Works
 
-**Diffusion LLMs** work fundamentally differently from traditional LLMs:
+**Training:**
+1. Take a sequence of tokens — `[BOS, THE, QUICK, BROWN, FOX, ...]`
+2. Sample a noise level `t` (0–1000), mask a fraction of tokens with `UNK`
+3. Feed the partially-masked sequence through the transformer
+4. Predict the original tokens at masked positions only
 
-| | Traditional LLMs (GPT) | Diffusion LLMs |
-|---|---|---|
-| **Generation** | Autoregressive — token by token | Iterative denoising — all tokens in parallel |
-| **Training** | Predict next token | Predict original tokens from masked input |
-| **Inference steps** | T tokens (sequential) | N steps (parallel per step) |
-| **Flexibility** | Single continuation | Multiple continuations, partial conditioning |
+**Inference (progressive denoising):**
+1. Start with all tokens as `UNK`
+2. Each step: forward pass predicts all masked positions in parallel
+3. Replace some `UNK` tokens with the highest-confidence predictions
+4. Repeat 10–20 steps until all tokens are determined
 
-### How It Works
-
-**Training Phase:**
-1. Take a sequence of tokens, e.g. `[BOS, THE, QUICK, BROWN, FOX, ...]`
-2. Randomly sample a noise level (timestep `t` from 0 to 1000)
-3. Mask tokens at that noise level (e.g., 80% masked with `UNK`)
-4. Feed the partially-masked sequence through the transformer
-5. Compute loss only on the masked positions (predict original tokens)
-
-**Inference Phase:**
-1. Initialize with all tokens as `UNK` (plus `BOS`)
-2. Progressive denoising: each step predicts values for UNK positions and fills them in
-3. After 10-20 steps, the sequence converges to a coherent output
-4. All tokens are predicted in parallel per step, not one-by-one
-
-### Key Advantages
-- **Parallel denoising**: All positions predicted simultaneously (vs sequential for autoregressive)
-- **Flexible generation**: Can condition on partial prompts, then complete the rest
-- **Multiple continuations**: Generate different completions from the same prompt by varying the denoising path
-- **Noise schedule control**: Adjust how quickly or gradually tokens are revealed
-
----
-
-## Architecture
-
-```
-nanochat_diffusion/
-├── __init__.py                    # Package init
-├── common.py                      # Utilities, DDP setup, print0, dtype detection
-├── gpt.py                        # GPT transformer architecture (from nanochat)
-├── optim.py                      # AdamW optimizer (from nanochat)
-├── tokenizer.py                  # BPE tokenizer (from nanochat)
-├── dataloader.py                 # Distributed dataloaders
-├── dataset.py                    # Data loading utilities
-├── engine.py                     # Efficient inference with KV cache
-├── core_eval.py                  # DCLM CORE score evaluation
-├── checkpoint_manager.py         # Save/load checkpoints
-├── flash_attention.py            # Flash Attention 3 wrapper
-├── diffusion_model.py            # ** Core: Diffusion LLM model **
-├── diffusion_scheduler.py        # Noise schedules (linear, cosine, etc.)
-├── diffusion_sampler.py          # Progressive denoising sampler
-├── tasks.py                      # Evaluation tasks (gsm8k, mmlu, arc, etc.)
-├── runs/
-│   ├── autoresearch.sh           # Speed benchmark script
-│   ├── autoresearch.md           # Benchmark experiment config
-│   ├── autoresearch.jsonl        # Experiment run log
-│   ├── experiments/worklog.md    # Detailed experiment log
-│   └── train_diffusion.sh        # Automated training script
-├── scripts/
-│   ├── diffusion_train.py        # Main training entry
-│   ├── diffusion_infer.py        # Inference/generation entry
-│   ├── diffusion_evaluate.py     # Benchmark evaluation entry
-│   └── download_dataset.py       # Download real data (FineWeb etc.)
-├── ui.html                       # ChatGPT-like web UI (from nanochat)
-├── logo.svg                      # Logo (from nanochat)
-├── pyproject.toml                # Dependencies
-├── LICENSE                       # MIT
-├── README.md                     # This file
-```
+**Key advantage:** All positions are predicted simultaneously per step, not one-by-one. Generation takes O(steps) instead of O(sequence_length), typically 10–20 steps regardless of sequence length.
 
 ---
 
 ## Quick Start
 
-### 1. Install dependencies
+### Prerequisites
+
+- Python 3.12+
+- CUDA-capable GPU (recommended; CPU works but is slow)
+- [uv](https://docs.astral.sh/uv/) package manager
+
+### Install
 
 ```bash
-# Clone the repo
-git clone https://github.com/karpathy/nanochat.git
-cd nanochat
+git clone https://github.com/stoykovstoyk/nanochat-diffusion.git
+cd nanochat-diffusion
 
-# Install using uv
-uv sync --extra gpu          # CUDA (A100/H100/etc.)
+# CUDA GPU (tested on sm_80+, sm_120/121)
+uv sync --extra gpu
+
+# CPU only
+uv sync --extra cpu
+
 source .venv/bin/activate
 ```
 
-The nanochat-diffusion code lives inside the nanochat repo as `scripts/` and `nanochat_diffusion/`.
-
-### 2. Download real training data
+### Train a Small Model
 
 ```bash
-# Download 50,000 FineWeb articles (~80 MB)
-python -m scripts.download_dataset --num-examples 50000
-```
-
-Downloaded parquet files go into `data/`. The existing dataloader reads them automatically.
-
-### 3. Train a diffusion model
-
-```bash
-# Train on the real data
-python -m scripts.diffusion_train --device-type=cuda \
-    --depth=8 --max-seq-len=1024 --device-batch-size=16 \
-    --num-iterations=2000 --lr=3e-4 --warmup-iters=200
-```
-
-### 4. Generate text with the trained model
-
-```bash
-python -m scripts.diffusion_infer --model diffusion \
-    --prompt "tell a joke" --max-tokens 64 --mode diffusion
-```
-
-### 5. Evaluate the model
-
-```bash
-python -m scripts.diffusion_evaluate --model diffusion --tasks gsm8k,arc
-```
-
-### 6. Speedrun benchmark
-
-A 100-iteration benchmark that measures training throughput (useful after code changes):
-
-```bash
-# CPU benchmark
 python -m scripts.diffusion_train \
-    --depth=8 --max-seq-len=256 --device-batch-size=8 \
-    --num-iterations=100 --save-every=999999
+    --depth 8 --max-seq-len 512 --device-batch-size 16 \
+    --num-iterations 2000 --lr 4e-4 --compile
+```
 
-# GPU benchmark (RTX A2000: ~17s)
-python -m scripts.diffusion_train \
-    --device-type=cuda \
-    --depth=8 --max-seq-len=256 --device-batch-size=8 \
-    --num-iterations=100 --save-every=999999
+### Generate Text
+
+```bash
+python -m scripts.diffusion_infer \
+    --prompt "The quick brown fox" \
+    --max-tokens 128 --num-steps 20
 ```
 
 ---
 
-## Detailed Usage
+## Installation Details
 
-### Training (`diffusion_train.py`)
+### GPU Setup
 
-**CLI Arguments:**
+The project uses PyTorch 2.12+ compiled for CUDA 13.0 (`cu130` wheels). Supported GPUs:
+
+| GPU | Compute Capability | Notes |
+|-----|-------------------|-------|
+| NVIDIA A100/H100/H200 | sm_80/sm_90 | Fully supported |
+| NVIDIA RTX 4090/5090 | sm_89/sm_120 | Fully supported |
+| NVIDIA GB10 (DGX Spark) | sm_121 | Supported via sm_120 binary compat |
+| Older GPUs (RTX 3090, etc.) | sm_86 | Supported |
+
+For Blackwell GPUs (sm_120/sm_121), set `TRITON_CUDA_ARCH=sm_120` for optimal triton codegen:
+
+```bash
+TRITON_CUDA_ARCH=sm_120 python -m scripts.diffusion_train --compile ...
+```
+
+### CPU Fallback
+
+Omit `--extra gpu` for CPU-only torch. Training will be slow but functional for small models.
+
+---
+
+## Training
+
+### Basic Usage
+
+```bash
+python -m scripts.diffusion_train \
+    --depth 8                     # Transformer depth (layers)
+    --max-seq-len 512             # Sequence length
+    --device-batch-size 16        # Batch size per GPU
+    --num-iterations 5000         # Training iterations
+    --lr 4e-4                     # Learning rate
+    --compile                     # Enable torch.compile (CUDA only)
+```
+
+### All Training Arguments
 
 | Argument | Default | Description |
-|---|---|---|
-| `--run` | `diffusion_demo` | W&B run name |
-| `--model` | `diffusion` | Model type: `diffusion` or `gpt` |
-| `--device-type` | `auto` | Device to train on: `cuda`, `cpu`, `mps` (empty = autodetect) |
-| `--depth` | `8` | Transformer depth (number of layers) |
-| `--aspect-ratio` | `64` | Aspect ratio for computing model dimension (`n_embd = depth * aspect_ratio`) |
+|----------|---------|-------------|
+| `--depth` | `8` | Number of transformer layers (`n_embd = depth × aspect_ratio`) |
+| `--aspect-ratio` | `64` | Width multiplier |
 | `--max-seq-len` | `1024` | Maximum sequence length |
-| `--window-pattern` | `SSSL` | Sliding window attention pattern |
 | `--device-batch-size` | `16` | Per-device batch size |
-| `--compile` | `False` | Enable `torch.compile` |
-| `--warmup-iters` | `100` | Warmup iterations |
-| `--lr` | `4e-4` | Base learning rate |
-| `--weight-decay` | `0.1` | Weight decay |
+| `--num-iterations` | `-1` | Training iterations (use target flops if `-1`) |
+| `--lr` | `4e-4` | Learning rate |
+| `--weight-decay` | `0.1` | AdamW weight decay |
 | `--beta1` | `0.8` | AdamW beta1 |
 | `--beta2` | `0.95` | AdamW beta2 |
-| `--num-diffusion-steps` | `1000` | Total diffusion steps for training |
-| `--sampling-steps` | `20` | Denoising steps for inference |
-| `--max-mask-ratio` | `0.8` | Maximum token mask ratio (0.0-1.0) |
-| `--noise-schedule` | `linear` | Noise schedule: `linear`, `cosine`, `exponential`, `constant` |
-| `--unk-token-id` | `32767` | UNK token ID |
+| `--compile` | `False` | Enable `torch.compile` |
+| `--compile-mode` | `reduce-overhead` | Compile mode: `default`, `reduce-overhead`, `max-autotune`, `max-autotune-no-cudagraphs` |
+| `--fullgraph` | `False` | Full CUDA graph capture |
+| `--custom-rmsnorm` | `False` | Use custom Triton RMS norm (2.8x faster) |
+| `--attention-backend` | `auto` | SDPA backend: `auto`, `math`, `flash`, `mem_efficient`, `cudnn` |
+| `--cudnn-benchmark` | `False` | Enable `torch.backends.cudnn.benchmark` |
+| `--num-diffusion-steps` | `1000` | Training timesteps |
+| `--sampling-steps` | `20` | Inference denoising steps |
+| `--max-mask-ratio` | `0.8` | Maximum mask fraction during training |
+| `--noise-schedule` | `linear` | Schedule: `linear`, `cosine`, `exponential`, `constant` |
 | `--vocab-size` | `32768` | Vocabulary size |
-| `--num-iterations` | `-1` | Training iterations (`-1` = use target flops) |
-| `--target-flops` | `-1.0` | Target FLOPs for training horizon |
-| `--target-param-data-ratio` | `12` | Target data:param ratio |
-| `--eval-iters` | `100` | Evaluate every N steps |
+| `--unk-token-id` | `32767` | UNK token ID (must be ≥ vocab_size - 1) |
+| `--warmup-iters` | `50` | LR warmup iterations |
 | `--save-every` | `1000` | Save checkpoint every N steps |
-|| `--resume` | `""` | Resume from checkpoint step |
-|| `--num-cpus` | `all` | Number of CPU cores to use for tokenization (integer or `all`) |
+| `--eval-iters` | `100` | Evaluate every N steps |
+| `--resume` | `""` | Resume from checkpoint step number (`latest` for most recent) |
+| `--device-type` | `auto` | Device: `cuda`, `cpu`, `mps` |
+| `--num-cpus` | `all` | CPU threads for tokenization |
+| `--run` | `diffusion_demo` | W&B run name |
 
-**Example — Quick experiment (single GPU):**
+### Training Examples
 
+**Quick sanity check (CPU, depth=4):**
 ```bash
 python -m scripts.diffusion_train \
-    --device-type=cuda \
-    --depth=4 \
-    --max-seq-len=256 \
-    --device-batch-size=8 \
-    --num-diffusion-steps=500 \
-    --max-mask-ratio=0.6 \
-    --noise-schedule=cosine \
-    --lr=1e-3 \
-    --num-iterations=200 \
-    --eval-iters=50 \
-    --save-every=500 \
-    --run="d4_test"
+    --depth 4 --max-seq-len 256 --device-batch-size 4 \
+    --num-iterations 100
 ```
 
-**Example — Medium training (single GPU, depth=12):**
+**GPU benchmark (DGX Spark/GB10 optimized):**
+```bash
+TRITON_CUDA_ARCH=sm_120 python -m scripts.diffusion_train \
+    --depth 8 --max-seq-len 512 --device-batch-size 16 \
+    --num-iterations 120 --compile --custom-rmsnorm
+```
 
+**Medium training run:**
 ```bash
 python -m scripts.diffusion_train \
-    --device-type=cuda \
-    --depth=12 \
-    --aspect-ratio=64 \
-    --max-seq-len=1024 \
-    --device-batch-size=16 \
-    --lr=3e-4 \
-    --warmup-iters=200 \
-    --num-diffusion-steps=1000 \
-    --max-mask-ratio=0.85 \
-    --noise-schedule=linear \
-    --vocab-size=32768 \
-    --run="d12_diffusion" \
-    --save-every=500 \
-    --eval-iters=100
+    --depth 12 --max-seq-len 1024 --device-batch-size 16 \
+    --num-iterations 10000 --lr 3e-4 --warmup-iters 200 \
+    --compile --save-every 1000 --eval-iters 500
 ```
 
-**Resuming from checkpoint:**
+**Resume from checkpoint:**
+```bash
+python -m scripts.diffusion_train --resume latest
+python -m scripts.diffusion_train --resume 5000
+```
+
+---
+
+## Inference
+
+### Basic Generation
 
 ```bash
-python -m scripts.diffusion_train \
-    --device-type=cuda \
-    --resume=step_000000500  # or --resume=latest
+python -m scripts.diffusion_infer \
+    --prompt "The future of AI is" \
+    --max-tokens 256 --num-steps 20 --temperature 0.8
 ```
 
-### Inference (`diffusion_infer.py`)
-
-**CLI Arguments:**
+### All Inference Arguments
 
 | Argument | Default | Description |
-|---|---|---|
-| `--model` | `diffusion` | Model type |
-| `--checkpoint-dir` | `""` | Checkpoint directory |
-| `--checkpoint-step` | `latest` | Specific checkpoint step or `latest` |
-| `--device` | `""` | Device (`""` = autodetect) |
-| `--seq-len` | `256` | Output sequence length |
-| `--max-tokens` | `128` | Max tokens to generate |
-| `--temperature` | `1.0` | Sampling temperature |
-| `--top-k` | `0` | Top-k filtering (0 = disabled) |
-| `--num-steps` | `20` | Denoising steps |
+|----------|---------|-------------|
 | `--prompt` | `""` | Text prompt to continue |
-| `--mode` | `diffusion` | Inference mode: `diffusion`, `autoregressive`, `both` |
-| `--output-file` | `""` | Save output to file |
+| `--max-tokens` | `128` | Maximum tokens to generate (beyond prompt) |
+| `--num-steps` | `20` | Denoising steps (more = better quality, slower) |
+| `--temperature` | `0.8` | Sampling temperature (lower = more deterministic) |
+| `--top-k` | `40` | Top-k filtering (0 = disabled) |
+| `--checkpoint-step` | `latest` | Checkpoint step to load |
+| `--checkpoint-dir` | `""` | Override checkpoint directory |
+| `--output-file` | `""` | Save generated text to file |
 
-**Examples:**
+### Examples
 
 ```bash
-# Diffusion sampling from prompt
+# Short generation
 python -m scripts.diffusion_infer \
-    --model diffusion \
-    --prompt "The quick brown fox" \
-    --max-tokens 64 \
-    --temperature 0.8 \
-    --num-steps 20 \
-    --mode diffusion
+    --prompt "Hello world" --max-tokens 64 --num-steps 15
 
-# Autoregressive generation (token by token)
+# Longer, more creative
 python -m scripts.diffusion_infer \
-    --model diffusion \
-    --prompt "Once upon a time" \
-    --max-tokens 128 \
-    --temperature 0.7 \
-    --top-k 50 \
-    --mode autoregressive
+    --prompt "Once upon a time" --max-tokens 512 \
+    --num-steps 30 --temperature 1.0 --top-k 50
 
-# Compare both modes
+# Deterministic (temperature=0)
 python -m scripts.diffusion_infer \
-    --model diffusion \
-    --prompt "Hello world" \
-    --max-tokens 64 \
-    --temperature 0.8 \
-    --num-steps 15 \
-    --mode both \
-    --output-file "comparison.txt"
+    --prompt "2 + 2 =" --max-tokens 16 --num-steps 10 --temperature 0
+
+# Save output to file
+python -m scripts.diffusion_infer \
+    --prompt "Write a poem" --max-tokens 256 \
+    --output-file poem.txt
 ```
 
-### Evaluation (`diffusion_evaluate.py`)
+---
+
+## Evaluation
 
 ```bash
-# Evaluate on all default tasks
 python -m scripts.diffusion_evaluate \
-    --model diffusion \
-    --checkpoint-step latest \
-    --tasks gsm8k,mmlu,arc,spellingbee
+    --checkpoint-step latest --tasks gsm8k,arc
 
-# Custom output
 python -m scripts.diffusion_evaluate \
-    --model diffusion \
-    --output-file results.json \
-    --seq-len 512
-
-# Evaluate only specific metrics
-python -m scripts.diffusion_evaluate \
-    --model diffusion \
-    --checkpoint-step latest \
-    --evaluate-perplexity \
-    --evaluate-generation \
-    --evaluate-consistency
+    --evaluate-perplexity --evaluate-generation
 ```
-
-**Supported Tasks:**
-- **GSM8K**: Grade school math word problems
-- **MMLU**: Multiple choice across 57 subjects
-- **ARC**: Alphabetical reasoning challenges
-- **Spelling Bee**: Spell/count letters
-- **HumanEval**: Simple Python coding tasks
-- **Custom JSON**: Any JSONL format via `customjson`
 
 ---
 
-## Hyperparameter Reference
+## Checkpoints & Storage
 
-### Diffusion-Specific Parameters
+All data is stored inside the project directory:
 
-| Parameter | Range | Recommended | Description |
-|---|---|---|---|
-| `num-diffusion-steps` | `100-5000` | `1000` | Number of training timesteps. More steps = smoother schedule but slower training. |
-| `sampling-steps` | `5-100` | `20` | Number of denoising steps during inference. Fewer = faster but lower quality. |
-| `max-mask-ratio` | `0.1-1.0` | `0.8` | Maximum fraction of tokens masked during training. Higher = harder learning signal. |
-| `noise-schedule` | string | `linear` | Noise schedule: `linear` (uniform), `cosine` (DDPM-style), `exponential`, `constant` |
+```
+nanochat-diffusion/
+├── data/
+│   ├── checkpoints/           # Model checkpoints
+│   │   └── diffusion/
+│   │       └── train/
+│   │           ├── step_0000000500/
+│   │           │   ├── model.pt        # Model weights
+│   │           │   ├── optimizer.pt    # Optimizer state
+│   │           │   ├── config.json     # Architecture config
+│   │           │   └── metadata.json   # Training metadata
+│   │           └── step_000001000/
+│   │               └── ...
+│   ├── tokenizer_diffusion/   # Tokenizer data
+│   └── train_*.parquet        # Training data
+├── cuda_kernels/              # Custom Triton/CUDA kernels
+├── nanochat_diffusion/        # Core library
+├── scripts/                   # Entry points
+└── pyproject.toml             # Dependencies
+```
 
-### Model Parameters
-
-| Parameter | Range | Description |
-|---|---|---|
-| `depth` | `2-64` | Number of transformer layers. Controls model capacity. |
-| `aspect-ratio` | `32-128` | `n_embd = depth * aspect_ratio`. Controls width. |
-| `max-seq-len` | `64-4096` | Maximum sequence length. |
-| `vocab-size` | `32768` | Vocabulary size. |
-| `unk-token-id` | `0-65535` | UNK token ID. Must be >= vocab_size-1. |
-
-### Training Parameters
-
-| Parameter | Range | Description |
-|---|---|---|
-| `lr` | `1e-5 - 1e-2` | Base learning rate. Lower for deeper models. |
-| `weight-decay` | `0.01-0.5` | L2 regularization. |
-| `warmup-iters` | `10-500` | Learning rate warmup steps. |
-| `device-batch-size` | `1-64` | Batch size per GPU. |
-| `num-iterations` | `-1 to N` | Training iterations (`-1` = auto). |
+Override the base directory with `NANOCHAT_BASE_DIR`:
+```bash
+export NANOCHAT_BASE_DIR=/path/to/storage
+```
 
 ---
 
-## Noise Schedules Explained
+## Code Structure
 
-### Linear
-Mask ratio increases linearly with timestep:
 ```
-t=0:   0% masked
-t=500: 40% masked
-t=1000: 80% masked
-```
-Simple, predictable, works well.
+nanochat_diffusion/
+├── diffusion_model.py        # Core: DiffusionModel (GPT + timestep conditioning)
+├── diffusion_scheduler.py    # Noise schedules (linear, cosine, exponential)
+├── diffusion_sampler.py      # Progressive denoising for inference
+├── gpt.py                    # GPT transformer (backbone for diffusion)
+├── checkpoint_manager.py     # Save/load with metadata
+├── common.py                 # DDP, device detection, logging
+├── tokenizer.py              # BPE tokenizer
+├── dataloader.py             # Distributed tokenized dataloader
+├── flash_attention.py        # FA3 wrapper (falls back to PyTorch SDPA)
+├── optim.py                  # AdamW optimizer
+├── engine.py                 # KV-cache inference
+└── core_eval.py              # DCLM CORE evaluation
 
-### Cosine
-Matches DDPM-style cosine schedule (more weight on early/late steps):
-```
-t=0:    0% masked
-t=250:  15% masked (slow start)
-t=500:  45% masked
-t=750:  65% masked
-t=1000: 80% masked (slow finish)
-```
-More nuanced — early denoising gets stronger gradient signal.
+scripts/
+├── diffusion_train.py        # Training entry point
+├── diffusion_infer.py        # Inference/generation
+├── diffusion_evaluate.py     # Benchmark evaluation
+└── download_dataset.py       # Download FineWeb dataset
 
-### Exponential
-Exponential masking schedule:
+cuda_kernels/
+├── rms_norm_triton.py        # Custom Triton RMS norm (faster)
+├── fp4_linear.py             # FP4 quantized linear layer (experimental)
+├── fp4_linear_kernels.cu     # FP4 CUDA kernels
+└── bench_gemm_dispatch.py    # GEMM backend benchmark
 ```
-t=0:    0% masked
-t=100:  20% masked
-t=500:  60% masked
-t=1000: 80% masked
-```
-Fast initial noise, gradual cleanup.
-
-### Constant
-Fixed mask ratio throughout:
-```
-t=0-1000: always 50% masked
-```
-Good for ablation studies.
 
 ---
 
-## Inference Modes Explained
+## Noise Schedules
 
-### Diffusion Mode
-1. Start with all tokens as `UNK` (e.g., `[UNK, UNK, UNK, ...]`)
-2. Each step, forward pass predicts values for ALL `UNK` positions simultaneously
-3. Replace `UNK` tokens with predicted values
-4. Repeat for `num_steps` (typically 20)
-5. After convergence, read the clean sequence
-
-**Use case**: Full generation from scratch, or partial prompting.
-
-### Autoregressive Mode
-1. Start with prompt
-2. Fill rest with `UNK`
-3. Predict one position at a time
-4. Append to prompt
-5. Repeat
-
-**Use case**: Conditional generation, familiar ChatGPT-like behavior.
-
-### Both Mode
-Run both modes side by side for comparison. Useful for benchmarking.
+| Schedule | Behavior | Best For |
+|----------|----------|----------|
+| `linear` | Mask ratio increases linearly with t | General purpose |
+| `cosine` | Slow start/finish, steep middle | Better gradient signal at extremes |
+| `exponential` | Fast initial noise, gradual cleanup | Short generation |
+| `constant` | Fixed mask ratio throughout | Ablation studies |
 
 ---
 
-## Checkpoints & Model Storage
+## Performance Tuning
 
-### Location
-
-Checkpoints are saved to:
-
-```
-~/.cache/nanochat_diffusion/checkpoints/<model_name>/<phase>/
-```
-
-| Level | Meaning |
-|-------|---------|
-| `<model_name>` | Set by `--model` (default: `diffusion`). Currently supports `diffusion` or `gpt`. |
-| `<phase>` | `train` during training, `eval` during inference/resumption. |
-
-Example structure:
-
-```
-~/.cache/nanochat_diffusion/checkpoints/diffusion/train/
-├── step_000000001/
-│   ├── model.pt           # Model weights
-│   ├── config.json         # Architecture config
-│   ├── optimizer.pt        # Optimizer state
-│   └── metadata.json       # Training metadata (loss, step, timestamp)
-├── step_000000500/
-│   ├── ...
-└── step_000001000/
-    └── ...
-```
-
-### Custom base directory
-
-Override the default `~/.cache/nanochat_diffusion` location by setting the environment variable:
+### Blackwell (GB10/DGX Spark, sm_121)
 
 ```bash
-export NANOCHAT_BASE_DIR=/path/to/my/checkpoints
+TRITON_CUDA_ARCH=sm_120 python -m scripts.diffusion_train \
+    --depth 8 --max-seq-len 512 --device-batch-size 16 \
+    --compile --compile-mode reduce-overhead --custom-rmsnorm \
+    --num-iterations 120
 ```
 
-After this, checkpoints will be stored at `/path/to/my/checkpoints/checkpoints/<model_name>/<phase>/`.
+Key findings (DGX Spark, depth=8, n_embd=512, bs=16, seq=512):
+- **Best**: 216ms/iter — compile + custom RMS norm + `TRITON_CUDA_ARCH=sm_120`
+- `compile` gives ~25% speedup over eager
+- `--custom-rmsnorm` gives ~7% over `F.rms_norm`
+- cuBLAS is already the default GEMM backend on sm_121
 
-### Resuming training
-
+### Low VRAM
 ```bash
 python -m scripts.diffusion_train \
-    --model diffusion \
-    --resume=latest          # Resume from most recent checkpoint
-
-python -m scripts.diffusion_train \
-    --model diffusion \
-    --resume=step_000000500  # Resume from a specific step
-```
-
-### Inference
-
-The same checkpoint path scheme is used during inference (`phase=eval`):
-
-```bash
-python -m scripts.diffusion_infer \
-    --model diffusion \
-    --prompt "Hello world" \
-    --max-tokens 64 \
-    --mode diffusion
-```
-
-This loads the latest checkpoint from `~/.cache/nanochat_diffusion/checkpoints/diffusion/train/`.
-
-You can also load a specific checkpoint step:
-
-```bash
-python -m scripts.diffusion_infer \
-    --model diffusion \
-    --prompt "tell a joke" \
-    --max-tokens 64 \
-    --checkpoint-step 500 \
-    --mode diffusion
-```
-
-### Resuming training
-
-```bash
-# Resume from latest checkpoint
-python -m scripts.diffusion_train --device-type=cuda \
-    --depth=8 --max-seq-len=1024 --device-batch-size=16 \
-    --num-iterations=4000 --lr=3e-4 --warmup-iters=200 \
-    --resume=latest
-
-# Resume from a specific step
-python -m scripts.diffusion_train \
-    --resume=step_000001000
-
-# Resuming restores model weights and optimizer state,
-# and continues training from the saved step counter.
-```
-
----
-
-## Scaling Guide
-
-## Scaling Guide
-
-| Scale | depth | seq_len | GPUs | VRAM | Use Case |
-|---|---|---|---|---|---|
-| **Tiny** | 2-4 | 64 | 1 | <8GB | Quick experiments |
-| **Small** | 6-8 | 256 | 2-4 | <24GB | Prototype validation |
-| **Medium** | 12-16 | 512-1024 | 4-8 | <80GB | Research experiments |
-| **Large** | 24-32 | 1024-2048 | 8 | ~80GB each | Production training |
-| **GPT-2** | ~26 | 2048 | 8xH100 | ~80GB each | GPT-2 capability |
-
-**Single GPU note**: Omit `torchrun`, all code works on a single GPU but 8× slower.
-
-**Low VRAM**: Reduce `--device-batch-size` from 32 → 16 → 8 → 4 → 2 → 1.
-
----
-
-## Architecture Diagram
-
-```
-Input Sequence: [BOS, THE, QUICK, BROWN, FOX, ...]
-                  │
-          ┌──────┴──────┐
-          │  mask_tokens │  ← Randomly mask at noise level
-          └──────┴──────┘
-                  │
-          Partially Masked:
-          [BOS, UNK, QUICK, UNK, UNK, ...]
-                  │
-          ┌──────┴──────┐
-          │ Diffusion     │
-          │ Transformer   │
-          │ (GPT + Timestep │
-          │  Embedding +  │
-          │  UNK Type)    │
-          └──────┴──────┘
-                  │
-          Predicted Tokens:
-          [BOS, THE, QUICK, BROWN, FOX, ...]
-                  │
-          ┌──────┴──────┐
-          │ Loss on      │  ← Cross-entropy on masked only
-          │ masked only  │
-          └──────┴──────┘
-```
-
----
-
-## File Structure
-
-### Core Models
-- **`diffusion_model.py`** — The main DiffusionModel: wraps GPT with timestep embedding, UNK type embedding, iterative denoising
-- **`diffusion_scheduler.py`** — Noise schedules: linear, cosine, exponential, constant
-- **`diffusion_sampler.py`** — Progressive denoising sampler for inference
-- **`gpt.py`** — Standard GPT architecture (from nanochat)
-- **`optim.py`** — AdamW + Muon optimizer (from nanochat)
-- **`engine.py`** — KV cache for efficient inference
-- **`flash_attention.py`** — Flash Attention 3 wrapper
-
-### Utilities
-- **`common.py`** — Distributed training setup, print0, dtype handling
-- **`tokenizer.py`** — BPE tokenizer (GPT-4 style)
-- **`dataloader.py`** — Distributed data loaders (best-fit cropping)
-- **`dataset.py`** — Data loading utilities
-- **`checkpoint_manager.py`** — Save/load checkpoints with metadata
-- **`core_eval.py`** — DCLM CORE score evaluation
-
-### Scripts
-- **`scripts/diffusion_train.py`** — Main training loop
-- **`scripts/diffusion_infer.py`** — Inference/generation
-- **`scripts/diffusion_evaluate.py`** — Benchmark evaluation
-- **`runs/train_diffusion.sh`** — Automated training script
-
----
-
-## Training Loop (Step by Step)
-
-```python
-# 1. Load batch: shape (B, T)
-batch = next(dataloader)          # e.g., (16, 1024)
-
-# 2. Sample random timesteps for the batch
-t = torch.randint(0, 1000, (B,))  # (16,)  ← one timestep per sequence
-
-# 3. Mask tokens at the sampled noise levels
-masked = model.mask_tokens(batch, t)  # Some tokens → UNK_ID
-
-# 4. Forward pass through the diffusion model
-logits = model(masked, t=t, targets=batch)  # (B, T, vocab_size)
-
-# 5. Compute loss on masked positions only
-loss = F.cross_entropy(
-    logits.view(-1, vocab_size),
-    batch.view(-1),
-    ignore_index=0  # Ignore BOS
-)
-
-# 6. Backward pass
-loss.backward()
-optimizer.step()
-optimizer.zero_grad()
-```
-
-**Key difference from autoregressive:** The loss is computed on ALL masked positions simultaneously, not sequentially. Each position gets a gradient signal for its correct token.
-
----
-
-## Inference Loop (Step by Step)
-
-```python
-# 1. Initialize with all UNK
-current_tokens = [UNK, UNK, UNK, ..., UNK]  # (seq_len,)
-
-# 2. Progressive denoising
-for step in range(num_steps):
-    # Forward pass
-    logits = model(current_tokens)  # (1, seq_len, vocab_size)
-    
-    # Find which positions are still UNK
-    unk_positions = [i for i, t in enumerate(current_tokens) if t == UNK_ID]
-    
-    # Sample predicted values for UNK positions
-    for pos in unk_positions:
-        probs = logits[0, pos]
-        predicted_token = sample(probs)
-        current_tokens[pos] = predicted_token
-    
-    # Progress tracking
-    if all_determined(): break
-    
-# 3. Read clean sequence
-sequence = current_tokens  # All positions filled
-```
-
----
-
-## Troubleshooting
-
-### Out of Memory
-- Reduce `--device-batch-size`
-- Reduce `--max-seq-len`
-- Reduce `--depth`
-- Use `--noise-schedule=linear` (simplest memory footprint)
-
-### Loss Not Decreasing
-- Check `--lr` is appropriate (try `1e-3` for small models, `3e-4` for large)
-- Increase `--max-mask-ratio` (e.g., `0.9` for harder training signal)
-- Ensure `--num-diffusion-steps` is reasonable (e.g., `1000`)
-- Check `--warmup-iters` is sufficient for the batch size
-
-### Poor Generation Quality
-- Increase `--num-steps` during inference (e.g., `40` instead of `20`)
-- Adjust `--temperature` (lower = more deterministic)
-- Try different `--noise-schedule` (cosine often works better than linear)
-- Increase training iterations
-
-### Vocab Mismatch
-- Ensure `--unk-token-id >= vocab_size - 1` (e.g., `32767` for vocab `32768`)
-- The UNK token must be outside the normal vocabulary range
-
----
-
-## Research Questions
-
-1. **Scaling Laws**: How does diffusion LLM performance scale with model size and depth?
-2. **Noise Schedules**: Does linear/cosine/exponential matter for final quality?
-3. **Parallel vs Autoregressive**: What's the actual inference speedup?
-4. **Conditioning**: How well does it handle partial prompts?
-5. **Quality**: Can diffusion LLMs match autoregressive LLMs at same compute budget?
-6. **Diversity**: Can one model produce multiple different continuations?
-
----
-
-## Benchmark Script
-
-A quick 100-iteration benchmark to validate training throughput after code changes:
-
-```bash
-# Runs the autoresearch benchmark (CPU)
-bash runs/autoresearch.sh
-
-# Or directly:
-python -m scripts.diffusion_train \
-    --depth=8 --max-seq-len=256 --device-batch-size=8 \
-    --num-iterations=100 --save-every=999999 \
-    --run="benchmark"
+    --depth 4 --max-seq-len 256 --device-batch-size 4 \
+    --compile
 ```
 
 ---
 
 ## License
 
-MIT License (same as nanochat)
-
----
-
-**Built on top of:** [karpathy/nanochat](https://github.com/karpathy/nanochat) and [karpathy/nanogpt](https://github.com/karpathy/nanogpt)
+MIT (same as [nanochat](https://github.com/karpathy/nanochat))

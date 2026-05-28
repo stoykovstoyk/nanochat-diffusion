@@ -50,12 +50,17 @@ setup_default_logging()
 logger = logging.getLogger(__name__)
 
 def get_base_dir():
+    """Get project base directory for checkpoints, tokenizer data, etc.
+    
+    Defaults to <project_root>/data, can be overridden via NANOCHAT_BASE_DIR env var.
+    """
     if os.environ.get("NANOCHAT_BASE_DIR"):
         nanochat_dir = os.environ.get("NANOCHAT_BASE_DIR")
     else:
-        home_dir = os.path.expanduser("~")
-        cache_dir = os.path.join(home_dir, ".cache")
-        nanochat_dir = os.path.join(cache_dir, "nanochat_diffusion")
+        # Project-local: use nanochat_diffusion/data/ directory
+        module_dir = os.path.dirname(os.path.abspath(__file__))  # nanochat_diffusion/
+        project_root = os.path.dirname(module_dir)               # project root
+        nanochat_dir = os.path.join(project_root, "data")
     os.makedirs(nanochat_dir, exist_ok=True)
     return nanochat_dir
 

@@ -1,17 +1,5 @@
 .venv/
 __pycache__/
 *.pyc
-dev-ignore/
-report.md
-eval_bundle/
-
-# Secrets
-.env
-
-# Local setup
-CLAUDE.md
-wandb/
 *.so
-compiled_cache.db
-test_mma_direct*
-_debug_*.py
+wandb/

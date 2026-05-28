@@ -14,11 +14,7 @@ import torch
 import torch.distributed as dist
 
 torch.set_float32_matmul_precision('high')
-# torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = True
 
-# Enable cudnn benchmark if requested (handled after parse_args)
-
-from nanochat_diffusion.gpt import GPT, GPTConfig, Linear, use_custom_rmsnorm
 from nanochat_diffusion.diffusion_model import DiffusionModel, DiffusionConfig
 from nanochat_diffusion.diffusion_scheduler import create_noise_schedule, mask_tokens_simple
 from nanochat_diffusion.tokenizer import Tokenizer, UNK_TOKEN_ID
@@ -41,7 +37,6 @@ parser = argparse.ArgumentParser(description="Train Diffusion LLM")
 
 # Logging
 parser.add_argument("--run", type=str, default="diffusion_demo", help="wandb run name")
-parser.add_argument("--model", type=str, default="diffusion", help="model type: 'diffusion' or 'gpt'")
 
 # Runtime
 parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
@@ -52,7 +47,6 @@ parser.add_argument("--depth", type=int, default=8, help="depth of the Transform
 parser.add_argument("--aspect-ratio", type=int, default=64, help="model_dim = depth * aspect_ratio")
 parser.add_argument("--head-dim", type=int, default=128, help="target head dimension for attention")
 parser.add_argument("--max-seq-len", type=int, default=1024, help="max context length")
-parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding window pattern")
 
 # Diffusion-specific config
 parser.add_argument("--num-diffusion-steps", type=int, default=1000, help="total diffusion steps for training")
@@ -121,108 +115,41 @@ print0(f"CPU cores: {num_cpus}")
 device_type = args.device_type or autodetect_device_type()
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 
-if args.model == "diffusion":
-    # Diffusion LLM setup
-    print0(f"Setting up Diffusion LLM (depth={args.depth}, seq_len={args.max_seq_len})")
-    
-    # Calculate model dimension
-    n_embd = args.depth * args.aspect_ratio  # e.g., 8 * 64 = 512
-    print0(f"Model dimension: {n_embd}")
-    
-    # Compute n_head dynamically (same as original nanochat: n_embd // 128)
-    n_head = n_embd // 128
-    n_kv_head = n_head  # GQA: n_kv_head == n_head
-    print0(f"n_head: {n_head}, n_kv_head: {n_kv_head}")
-    
-    # Create diffusion config
-    diffusion_config = DiffusionConfig(
-        sequence_len=args.max_seq_len,
-        vocab_size=args.vocab_size,
-        n_layer=args.depth,
-        n_head=n_head,
-        n_kv_head=n_kv_head,
-        n_embd=n_embd,
-        window_pattern=args.window_pattern,
-        num_diffusion_steps=args.num_diffusion_steps,
-        unk_token_id=args.unk_token_id,
-        max_mask_ratio=args.max_mask_ratio,
-        sampling_steps=args.sampling_steps,
-    )
-    
-    # Create model
-    model = DiffusionModel(diffusion_config)
-    model.to(device)
-    
-    # Setup tokenizer
-    base_dir = get_base_dir()
-    tokenizer_path = os.path.join(base_dir, "tokenizer_diffusion")
-    os.makedirs(tokenizer_path, exist_ok=True)
-    tokenizer = Tokenizer(tokenizer_path, verbose=True)
-    
-elif args.model == "gpt":
-    # Standard GPT setup for comparison
-    print0(f"Setting up GPT (depth={args.depth}, seq_len={args.max_seq_len})")
-    
-    n_embd = args.depth * args.aspect_ratio
-    gpt_config = GPTConfig(
-        sequence_len=args.max_seq_len,
-        vocab_size=args.vocab_size,
-        n_layer=args.depth,
-        n_head=6,
-        n_kv_head=6,
-        n_embd=n_embd,
-        window_pattern=args.window_pattern,
-    )
-    
-    model = GPT(gpt_config)
-    model.to(device)
-    
-    base_dir = get_base_dir()
-    tokenizer_path = os.path.join(base_dir, "tokenizer")
-    os.makedirs(tokenizer_path, exist_ok=True)
-    tokenizer = Tokenizer(tokenizer_path, verbose=True)
-else:
-    raise ValueError(f"Unknown model type: {args.model}")
+# Diffusion LLM setup
+print0(f"Setting up Diffusion LLM (depth={args.depth}, seq_len={args.max_seq_len})")
+
+n_embd = args.depth * args.aspect_ratio
+print0(f"Model dimension: {n_embd}")
+
+n_head = n_embd // 128
+n_kv_head = n_head
+print0(f"n_head: {n_head}, n_kv_head: {n_kv_head}")
+
+diffusion_config = DiffusionConfig(
+    sequence_len=args.max_seq_len,
+    vocab_size=args.vocab_size,
+    n_layer=args.depth,
+    n_head=n_head,
+    n_kv_head=n_kv_head,
+    n_embd=n_embd,
+    window_pattern="SSSL",
+    num_diffusion_steps=args.num_diffusion_steps,
+    unk_token_id=args.unk_token_id,
+    max_mask_ratio=args.max_mask_ratio,
+    sampling_steps=args.sampling_steps,
+)
+
+model = DiffusionModel(diffusion_config)
+model.to(device)
+
+base_dir = get_base_dir()
+tokenizer_path = os.path.join(base_dir, "tokenizer_diffusion")
+os.makedirs(tokenizer_path, exist_ok=True)
+tokenizer = Tokenizer(tokenizer_path, verbose=True)
 
 # -----------------------------------------------------------------------------
 # Setup tokenizer data loader
 print0("Setting up data loader...")
-# Create sample data for demonstration
-sample_texts = [
-    "The quick brown fox jumps over the lazy dog.",
-    "Machine learning is transforming the world of artificial intelligence.",
-    "Deep learning models have achieved remarkable results in NLP tasks.",
-    "The diffusion process allows for iterative refinement of generated sequences.",
-    "Attention mechanisms enable models to focus on relevant parts of input.",
-] * 100  # Repeat for more data
-
-# In production, this would load from parquet files
-# For now, create synthetic data
-class SyntheticDataset:
-    def __init__(self, texts, tokenizer, max_seq_len=1024):
-        self.texts = texts
-        self.tokenizer = tokenizer
-        self.max_seq_len = max_seq_len
-        
-    def __len__(self):
-        return len(self.texts)
-    
-    def __getitem__(self, idx):
-        if isinstance(idx, torch.Tensor):
-            return torch.stack([self.__getitem__(int(i)) for i in idx])
-        text = self.texts[idx]
-        tokens = self.tokenizer.encode(text, prepend=True)
-        # Pad or truncate to max_seq_len
-        if len(tokens) < self.max_seq_len:
-            tokens = tokens + [0] * (self.max_seq_len - len(tokens))
-        else:
-            tokens = tokens[:self.max_seq_len]
-        return torch.tensor(tokens, dtype=torch.long)
-
-# For demo, use simple dataset
-dataset = SyntheticDataset(sample_texts, tokenizer, args.max_seq_len)
-
-# Create proper distributed dataloader driven by --num_cpus
 print0(f"Parallelism: {num_cpus} tokenizer threads, buffer_size={num_cpus}")
 dataloader = tokenizing_distributed_data_loader_with_state_bos_bestfit(
     tokenizer=tokenizer,
@@ -236,11 +163,9 @@ dataloader = tokenizing_distributed_data_loader_with_state_bos_bestfit(
     buffer_size=num_cpus,
 )
 
-def get_dataloader(split="train", num_workers=None):
-    """Return the distributed dataloader for the requested split."""
+def get_dataloader(split="train"):
     if split == "train":
         return dataloader
-    # For eval, create a fresh iterator from the same config
     return tokenizing_distributed_data_loader_with_state_bos_bestfit(
         tokenizer=tokenizer,
         B=args.device_batch_size,
@@ -256,33 +181,18 @@ def get_dataloader(split="train", num_workers=None):
 # -----------------------------------------------------------------------------
 # Set up optimizer
 print0("Setting up optimizer...")
-if args.model == "diffusion":
-    # For diffusion LLM, use AdamW with special learning rates
-    # The diffusion-specific params go into AdamW
-    diffusion_params = list(model.parameters())
-    optimizer = torch.optim.AdamW(
-        diffusion_params,
-        lr=args.lr,
-        betas=(args.beta1, args.beta2),
-        weight_decay=args.weight_decay,
-        fused=True
-    )
-else:
-    # Standard GPT optimizer (simplified from nanochat)
-    model_dim = n_embd
-    dmodel_lr_scale = (model_dim / 768) ** -0.5
-    
-    param_groups = [
-        dict(params=list(model.transformer.wte.parameters()), lr=0.2 * dmodel_lr_scale),
-        dict(params=list(model.lm_head.parameters()), lr=0.004 * dmodel_lr_scale),
-        dict(params=list(model.transformer.h.parameters()), lr=0.02 * dmodel_lr_scale),
-    ]
-    optimizer = torch.optim.AdamW(param_groups, lr=args.lr, weight_decay=args.weight_decay)
-
+diffusion_params = list(model.parameters())
+optimizer = torch.optim.AdamW(
+    diffusion_params,
+    lr=args.lr,
+    betas=(args.beta1, args.beta2),
+    weight_decay=args.weight_decay,
+    fused=True
+)
 print0(f"Optimizer: AdamW with lr={args.lr}, weight_decay={args.weight_decay}")
 
 # -----------------------------------------------------------------------------
-# Setup wandb (optional, falls back to DummyWandb if no API key)
+# Setup wandb
 try:
     wandb_run = wandb.init(
         project="nanochat_diffusion",
@@ -311,12 +221,10 @@ train_start_time = time.time()
 total_steps = 0
 best_loss = float('inf')
 
-# Get model to compute FLOPs
 peak_flops = get_peak_flops("cuda" if torch.cuda.is_available() else "unknown")
 
-# Resume from checkpoint if requested
 if args.resume:
-    result = load_checkpoint(model, optimizer, step=args.resume, model_name=args.model, phase="train")
+    result = load_checkpoint(model, optimizer, step=args.resume, model_name="diffusion", phase="train")
     if result[0] is not None:
         model, metadata = result
         total_steps = metadata.get("step", 0) if metadata else 0
@@ -324,11 +232,9 @@ if args.resume:
     else:
         print0(f"Could not resume from '{args.resume}', starting from scratch")
 
-# Check if we should just evaluate
 if args.eval_only:
     print0("Running evaluation only...")
     model.eval()
-    # Evaluation code would go here
     sys.exit(0)
 
 if args.attention_backend != "auto":
@@ -340,81 +246,50 @@ if args.attention_backend != "auto":
     print0(f"Attention backend set to: {args.attention_backend}")
 
 if args.custom_rmsnorm:
+    from nanochat_diffusion.gpt import use_custom_rmsnorm
     use_custom_rmsnorm(True)
     print0("Using custom fused CUDA RMS norm kernel")
 
 if args.compile:
     fg = "fullgraph" if args.fullgraph else "partial"
-    print0(f"Compiling model with torch.compile (mode=reduce-overhead, {fg})...")
+    print0(f"Compiling model with torch.compile (mode={args.compile_mode}, {fg})...")
     model = torch.compile(model, mode=args.compile_mode, fullgraph=args.fullgraph)
 
 # Training loop
 model.train()
 losses = []
-eval_losses = []
-# Disable GradScaler/autocast — fp32 is fastest on this model size
-use_bf16 = False
 
-# Single dataloader (no epoch loop)
 dataloader = get_dataloader("train")
 
-# Pre-generate timesteps for all steps
 all_t = torch.randint(0, args.num_diffusion_steps, (args.num_iterations, args.device_batch_size), device=device)
 
 for step_idx, (input_tokens, target_tokens) in enumerate(dataloader):
     total_steps += 1
     if total_steps == 1 or total_steps == 6:
         print0(f"Step {total_steps}: batch shape={input_tokens.shape}")
-    
+
     inputs, targets = input_tokens, target_tokens
     B, T = inputs.shape
-    
-    # Use pre-generated timestep
+
     t = all_t[min(step_idx, args.num_iterations - 1), :B]
-    
-    if args.model == "diffusion":
-        # Mask tokens at this noise level
-        masked_tokens = model.mask_tokens(inputs, t)
-        
-        # Forward pass
-        loss = model(masked_tokens, t=t, targets=targets)
-        
-        # Backward pass
-        loss.backward()
-        
-        # Optimizer step
-        optimizer.step()
-        optimizer.zero_grad(set_to_none=True)
-        
-        # Clone loss to avoid CUDAGraph memory overwrite when torch.compile captures the graph
-        losses.append(loss.detach().clone())
-            
-    else:
-        # Standard GPT forward pass
-        targets = inputs[:, 1:]
-        inputs = inputs[:, :-1]
-        
-        logits = model(inputs)
-        loss = torch.nn.functional.cross_entropy(
-            logits.view(-1, logits.size(-1)),
-            targets.view(-1),
-            ignore_index=0
-        )
-        
-        loss.backward()
-        optimizer.step()
-        optimizer.zero_grad()
-        
-        losses.append(loss.detach())
-    
-    # Compute average loss every step so it's always available
+
+    masked_tokens = model.mask_tokens(inputs, t)
+
+    loss = model(masked_tokens, t=t, targets=targets)
+
+    loss.backward()
+
+    optimizer.step()
+    optimizer.zero_grad(set_to_none=True)
+
+    losses.append(loss.detach().clone())
+
     avg_loss = sum(losses[-10:]) / min(10, len(losses))
-    
+
     if total_steps % 50 == 0:
         print0(f"Step {total_steps}: loss = {avg_loss.item():.4f}, "
                f"lr = {optimizer.param_groups[0]['lr']:.6f}")
-    
-    # Check if we've reached target iterations
+
     if args.num_iterations > 0 and total_steps >= args.num_iterations:
         break
 
@@ -427,17 +302,15 @@ print0(f"Avg time/iter: {train_elapsed/total_steps*1000:.1f}ms")
 print0(f"Final loss: {losses[-1].item():.4f}")
 print0("=" * 80)
 
-# Save final checkpoint (skip if save_every > num_iterations — benchmark mode)
 if args.save_every <= args.num_iterations:
     final_loss_val = losses[-1].item() if hasattr(losses[-1], 'item') else float(losses[-1])
     save_checkpoint(
         model, optimizer, total_steps, final_loss_val,
         {"final_loss": final_loss_val},
-        model_name=args.model,
+        model_name="diffusion",
         phase="train"
     )
 
-# Cleanup
 try:
     wandb_run.finish()
 except Exception:

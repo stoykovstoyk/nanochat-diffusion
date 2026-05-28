@@ -1,6 +1,5 @@
 """
 Checkpoint management for diffusion LLM.
-Adapted from karpathy/nanochat.
 """
 
 import os
@@ -9,83 +8,64 @@ import time
 import torch
 from nanochat_diffusion.common import get_base_dir, print0
 from nanochat_diffusion.diffusion_model import DiffusionModel, DiffusionConfig
-from nanochat_diffusion.gpt import GPTConfig
 
-def get_checkpoint_dir(model_name="base", phase="train"):
+
+def get_checkpoint_dir(model_name="diffusion", phase="train"):
     base_dir = get_base_dir()
     phase_dir = os.path.join(base_dir, "checkpoints", model_name, phase)
     os.makedirs(phase_dir, exist_ok=True)
     return phase_dir
 
-def save_checkpoint(model, optimizer, step, loss, metrics, model_name="base", phase="train", 
-                   include_optimizer=True, include_scheduler=True):
+
+def save_checkpoint(model, optimizer, step, loss, metrics, model_name="diffusion", phase="train",
+                   include_optimizer=True):
     """Save model checkpoint with metadata"""
-    if isinstance(model, DiffusionModel):
-        config = model.config
-    else:
-        config = GPTConfig()
-    
+    config = model.config if isinstance(model, DiffusionModel) else DiffusionConfig()
+
     checkpoint_dir = get_checkpoint_dir(model_name, phase)
     checkpoint_path = os.path.join(checkpoint_dir, f"step_{step:010d}")
-    
     os.makedirs(checkpoint_path, exist_ok=True)
-    
+
     # Save model weights
     if hasattr(model, 'module'):
         state_dict = model.module.state_dict()
     else:
         state_dict = model.state_dict()
     torch.save(state_dict, os.path.join(checkpoint_path, "model.pt"))
-    
+
     # Save config
-    if isinstance(config, DiffusionConfig):
-        config_dict = {
-            'model_type': 'diffusion',
-            'diffusion_config': {
-                'sequence_len': config.sequence_len,
-                'vocab_size': config.vocab_size,
-                'n_layer': config.n_layer,
-                'n_head': config.n_head,
-                'n_kv_head': config.n_kv_head,
-                'n_embd': config.n_embd,
-                'num_diffusion_steps': config.num_diffusion_steps,
-                'unk_token_id': config.unk_token_id,
-                'max_mask_ratio': config.max_mask_ratio,
-            },
-            'gpt_config': {
-                'sequence_len': config.sequence_len,
-                'vocab_size': config.vocab_size,
-                'n_layer': config.n_layer,
-                'n_head': config.n_head,
-                'n_kv_head': config.n_kv_head,
-                'n_embd': config.n_embd,
-                'window_pattern': config.window_pattern,
-            }
+    config_dict = {
+        'model_type': 'diffusion',
+        'diffusion_config': {
+            'sequence_len': config.sequence_len,
+            'vocab_size': config.vocab_size,
+            'n_layer': config.n_layer,
+            'n_head': config.n_head,
+            'n_kv_head': config.n_kv_head,
+            'n_embd': config.n_embd,
+            'num_diffusion_steps': config.num_diffusion_steps,
+            'unk_token_id': config.unk_token_id,
+            'max_mask_ratio': config.max_mask_ratio,
+        },
+        'gpt_config': {
+            'sequence_len': config.sequence_len,
+            'vocab_size': config.vocab_size,
+            'n_layer': config.n_layer,
+            'n_head': config.n_head,
+            'n_kv_head': config.n_kv_head,
+            'n_embd': config.n_embd,
+            'window_pattern': config.window_pattern,
         }
-    else:
-        config_dict = {
-            'model_type': 'gpt',
-            'gpt_config': {
-                'sequence_len': config.sequence_len,
-                'vocab_size': config.vocab_size,
-                'n_layer': config.n_layer,
-                'n_head': config.n_head,
-                'n_kv_head': config.n_kv_head,
-                'n_embd': config.n_embd,
-                'window_pattern': getattr(config, 'window_pattern', 'SSSL'),
-            }
-        }
-    
+    }
+
     with open(os.path.join(checkpoint_path, "config.json"), "w") as f:
         json.dump(config_dict, f, indent=2)
-    
-    # Save optimizer state
+
     if include_optimizer and optimizer is not None:
         if hasattr(optimizer, 'state_dict'):
-            torch.save(optimizer.state_dict(), 
+            torch.save(optimizer.state_dict(),
                       os.path.join(checkpoint_path, "optimizer.pt"))
-    
-    # Save training metadata
+
     metadata = {
         'step': step,
         'loss': float(loss),
@@ -94,7 +74,7 @@ def save_checkpoint(model, optimizer, step, loss, metrics, model_name="base", ph
     }
     with open(os.path.join(checkpoint_path, "metadata.json"), "w") as f:
         json.dump(metadata, f, indent=2)
-    
+
     print0(f"Saved checkpoint at step {step} to {checkpoint_path}")
     return checkpoint_path
 

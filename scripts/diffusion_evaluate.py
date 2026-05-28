@@ -2,10 +2,8 @@
 Diffusion LLM Evaluation Script.
 
 Usage:
-    python -m scripts.diffusion_evaluate --model diffusion --checkpoint-step latest
-    python -m scripts.diffusion_evaluate --model diffusion --tasks gsm8k,arc
-
-Adapted from karpathy/nanochat.
+    python -m scripts.diffusion_evaluate --checkpoint-step latest
+    python -m scripts.diffusion_evaluate --tasks gsm8k,arc
 """
 
 import os
@@ -16,7 +14,6 @@ import time
 import torch
 import torch.nn.functional as F
 
-from nanochat_diffusion.gpt import GPT, GPTConfig, Linear
 from nanochat_diffusion.diffusion_model import DiffusionModel, DiffusionConfig
 from nanochat_diffusion.diffusion_sampler import DiffusionSampler
 from nanochat_diffusion.tokenizer import Tokenizer, UNK_TOKEN_ID
