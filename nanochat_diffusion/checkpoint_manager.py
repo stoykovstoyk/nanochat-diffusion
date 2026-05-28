@@ -26,8 +26,10 @@ def save_checkpoint(model, optimizer, step, loss, metrics, model_name="diffusion
     checkpoint_path = os.path.join(checkpoint_dir, f"step_{step:010d}")
     os.makedirs(checkpoint_path, exist_ok=True)
 
-    # Save model weights
-    if hasattr(model, 'module'):
+    # Save model weights — unwrap torch.compile wrapper if present
+    if hasattr(model, '_orig_mod'):
+        state_dict = model._orig_mod.state_dict()
+    elif hasattr(model, 'module'):
         state_dict = model.module.state_dict()
     else:
         state_dict = model.state_dict()
@@ -104,8 +106,10 @@ def load_checkpoint(model, optimizer=None, step="latest", model_name="base", pha
         print0(f"No model file at {model_path}")
         return None, None
     
-    # Load model
+    # Load model — strip _orig_mod. prefix for backward compat with compiled checkpoints
     state_dict = torch.load(model_path, map_location='cpu')
+    if any(k.startswith("_orig_mod.") for k in state_dict):
+        state_dict = {k.removeprefix("_orig_mod."): v for k, v in state_dict.items()}
     if hasattr(model, 'module'):
         model.module.load_state_dict(state_dict)
     else:
