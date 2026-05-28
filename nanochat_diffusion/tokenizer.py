@@ -10,12 +10,12 @@ import json
 from tokenizers import Tokenizer as HFTokenizer, models, trainers, pre_tokenizers, decoders
 
 # Diffusion UNK sentinel (outside BPE vocab, within padded embed range)
-UNK_TOKEN_ID = 4095  # for BPE vocab_size=4094; padded to 4160
+UNK_TOKEN_ID = 32769  # outside BPE vocab (0-32767), padded to 32832
 
 
 class Tokenizer:
     def __init__(self, data_dir="", verbose=True):
-        self.vocab_size = 4096  # 0=BOS, 1-4094=BPE, 4095=UNK
+        self.vocab_size = UNK_TOKEN_ID + 1  # 32770: 0=BOS, 1-32768=BPE, 32769=UNK
         self.bos_id = 0
         self.unk_id = UNK_TOKEN_ID
         self.data_dir = data_dir
@@ -31,7 +31,7 @@ class Tokenizer:
             self._hf.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=True)
         self._hf.decoder = decoders.ByteLevel()
 
-    def train(self, texts, vocab_size=4094):
+    def train(self, texts, vocab_size=32768):
         """Train BPE from an iterator of strings."""
         trainer = trainers.BpeTrainer(
             vocab_size=vocab_size,
@@ -70,16 +70,22 @@ class Tokenizer:
     def decode(self, tokens):
         """Decode token IDs back to text.
         
-        Unshifts by 1 and decodes via BPE. Handles BOS at position 0.
+        Unshifts by 1 and decodes via BPE. Strips exactly one leading space
+        added by ByteLevel pretokenizer (add_prefix_space=True).
         """
         if isinstance(tokens, (list,)):
-            # Strip leading BOS if present
             if tokens and tokens[0] == self.bos_id:
                 tokens = tokens[1:]
-            # Unshift: our tokens are BPE+1
             bpe_ids = [max(0, t - 1) for t in tokens]
-            return self._hf.decode(bpe_ids)
-        return self._hf.decode([max(0, tokens - 1)])
+            text = self._hf.decode(bpe_ids)
+            # ByteLevel adds one leading space; strip it
+            if len(text) > 0 and text[0] == ' ':
+                text = text[1:]
+            return text
+        text = self._hf.decode([max(0, tokens - 1)])
+        if len(text) > 0 and text[0] == ' ':
+            text = text[1:]
+        return text
 
     def get_bos_token_id(self):
         return self.bos_id

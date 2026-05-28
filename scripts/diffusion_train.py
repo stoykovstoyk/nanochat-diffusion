@@ -166,7 +166,7 @@ if not os.path.exists(tokenizer_json):
                         if t:
                             yield t
         tokenizer = Tokenizer(data_dir="", verbose=False)
-        tokenizer.train(text_iter(), vocab_size=4094)
+        tokenizer.train(text_iter(), vocab_size=32768)
         tokenizer.save(tokenizer_json)
         print0(f"BPE tokenizer trained and saved to {tokenizer_json}")
 else:

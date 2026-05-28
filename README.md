@@ -58,7 +58,7 @@ Best config (loss 4.18 after 2000 steps on DGX Spark):
 python -m scripts.diffusion_train \
     --depth 8 --max-seq-len 512 --device-batch-size 16 \
     --num-iterations 2000 --lr 1e-3 --warmup-iters 100 --grad-clip 1.0 \
-    --vocab-size 4096 --unk-token-id 4095 --max-mask-ratio 0.15 \
+    --vocab-size 32770 --unk-token-id 32769 --max-mask-ratio 0.15 \
     --noise-schedule cosine
 ```
 
@@ -68,7 +68,7 @@ For Blackwell GPUs (GB10/DGX Spark, sm_121) with `torch.compile`:
 TRITON_CUDA_ARCH=sm_120 python -m scripts.diffusion_train \
     --depth 8 --max-seq-len 512 --device-batch-size 16 \
     --num-iterations 2000 --lr 1e-3 --warmup-iters 100 --grad-clip 1.0 \
-    --vocab-size 4096 --unk-token-id 4095 --max-mask-ratio 0.15 \
+    --vocab-size 32770 --unk-token-id 32769 --max-mask-ratio 0.15 \
     --noise-schedule cosine --compile --custom-rmsnorm
 ```
 
@@ -137,7 +137,7 @@ python -m scripts.diffusion_train \
 python -m scripts.diffusion_train \
     --depth 8 --max-seq-len 512 --device-batch-size 16 \
     --num-iterations 5000 --lr 1e-3 --warmup-iters 100 --grad-clip 1.0 \
-    --vocab-size 4096 --max-mask-ratio 0.15 --noise-schedule cosine
+    --vocab-size 32770 --max-mask-ratio 0.15 --noise-schedule cosine
 ```
 
 **Recommended production config (depth=12):**
@@ -145,7 +145,7 @@ python -m scripts.diffusion_train \
 python -m scripts.diffusion_train \
     --depth 12 --max-seq-len 1024 --device-batch-size 8 \
     --num-iterations 20000 --lr 8e-4 --warmup-iters 200 --grad-clip 1.0 \
-    --vocab-size 4096 --max-mask-ratio 0.2 --noise-schedule cosine \
+    --vocab-size 32770 --max-mask-ratio 0.2 --noise-schedule cosine \
     --compile --save-every 1000
 ```
 
@@ -242,7 +242,7 @@ Checkpoints are gitignored. Use `--save-every` to control save frequency.
 TRITON_CUDA_ARCH=sm_120 python -m scripts.diffusion_train \
     --depth 8 --max-seq-len 512 --device-batch-size 16 \
     --num-iterations 2000 --lr 1e-3 --warmup-iters 100 --grad-clip 1.0 \
-    --vocab-size 4096 --max-mask-ratio 0.15 --noise-schedule cosine \
+    --vocab-size 32770 --max-mask-ratio 0.15 --noise-schedule cosine \
     --compile --custom-rmsnorm
 ```
 

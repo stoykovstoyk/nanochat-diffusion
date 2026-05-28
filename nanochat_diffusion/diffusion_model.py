@@ -41,7 +41,7 @@ class DiffusionConfig:
     """Configuration for the Diffusion LLM."""
     # GPT base config (forwarded to GPTConfig)
     sequence_len: int = 2048
-    vocab_size: int = 4096
+    vocab_size: int = 32770
     n_layer: int = 12
     n_head: int = 6
     n_kv_head: int = 6
@@ -50,7 +50,7 @@ class DiffusionConfig:
 
     # Diffusion-specific config
     num_diffusion_steps: int = 1000          # total number of diffusion steps
-    unk_token_id: int = 4095                 # UNK token ID (outside BPE vocab, within padded range)
+    unk_token_id: int = 32769                 # UNK token ID (outside BPE vocab, within padded range)
     max_mask_ratio: float = 0.8               # maximum fraction of tokens to mask
     timestep_embed_dim: int = 256             # embedding dimension for timestep
     timestep_proj_dim: int = 512              # projected dim for timestep before adding
@@ -683,9 +683,9 @@ def create_diffusion_model(
     n_head: int = 6,
     n_kv_head: int = 6,
     n_embd: int = 768,
-    vocab_size: int = 4096,
+    vocab_size: int = 32770,
     num_diffusion_steps: int = 1000,
-    unk_token_id: int = 4095,
+    unk_token_id: int = 32769,
     max_mask_ratio: float = 0.8,
     sampling_steps: int = 20,
 ) -> DiffusionModel:
