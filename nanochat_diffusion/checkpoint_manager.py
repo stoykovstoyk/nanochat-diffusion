@@ -20,7 +20,13 @@ def get_checkpoint_dir(model_name="diffusion", phase="train"):
 def save_checkpoint(model, optimizer, step, loss, metrics, model_name="diffusion", phase="train",
                    include_optimizer=True):
     """Save model checkpoint with metadata"""
-    config = model.config if isinstance(model, DiffusionModel) else DiffusionConfig()
+    # Unwrap torch.compile wrapper to access real model
+    unwrapped = model
+    if hasattr(model, '_orig_mod'):
+        unwrapped = model._orig_mod
+    elif hasattr(model, 'module'):
+        unwrapped = model.module
+    config = unwrapped.config if isinstance(unwrapped, DiffusionModel) else DiffusionConfig()
 
     checkpoint_dir = get_checkpoint_dir(model_name, phase)
     checkpoint_path = os.path.join(checkpoint_dir, f"step_{step:010d}")
