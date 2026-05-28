@@ -56,7 +56,7 @@ Best config (loss 4.18 after 2000 steps on DGX Spark):
 
 ```bash
 python -m scripts.diffusion_train \
-    --depth 8 --max-seq-len 512 --device-batch-size 16 \
+    --depth 12 --max-seq-len 512 --device-batch-size 16 \
     --num-iterations 2000 --lr 1e-3 --warmup-iters 100 --grad-clip 1.0 \
     --vocab-size 32770 --unk-token-id 32769 --max-mask-ratio 0.15 \
     --noise-schedule cosine
@@ -66,7 +66,7 @@ For Blackwell GPUs (GB10/DGX Spark, sm_121) with `torch.compile`:
 
 ```bash
 TRITON_CUDA_ARCH=sm_120 python -m scripts.diffusion_train \
-    --depth 8 --max-seq-len 512 --device-batch-size 16 \
+    --depth 12 --max-seq-len 512 --device-batch-size 16 \
     --num-iterations 2000 --lr 1e-3 --warmup-iters 100 --grad-clip 1.0 \
     --vocab-size 32770 --unk-token-id 32769 --max-mask-ratio 0.15 \
     --noise-schedule cosine --compile --custom-rmsnorm
@@ -135,7 +135,7 @@ python -m scripts.diffusion_train \
 **Medium training (5000 iters):**
 ```bash
 python -m scripts.diffusion_train \
-    --depth 8 --max-seq-len 512 --device-batch-size 16 \
+    --depth 12 --max-seq-len 512 --device-batch-size 16 \
     --num-iterations 5000 --lr 1e-3 --warmup-iters 100 --grad-clip 1.0 \
     --vocab-size 32770 --max-mask-ratio 0.15 --noise-schedule cosine
 ```
@@ -240,7 +240,7 @@ Checkpoints are gitignored. Use `--save-every` to control save frequency.
 
 ```bash
 TRITON_CUDA_ARCH=sm_120 python -m scripts.diffusion_train \
-    --depth 8 --max-seq-len 512 --device-batch-size 16 \
+    --depth 12 --max-seq-len 512 --device-batch-size 16 \
     --num-iterations 2000 --lr 1e-3 --warmup-iters 100 --grad-clip 1.0 \
     --vocab-size 32770 --max-mask-ratio 0.15 --noise-schedule cosine \
     --compile --custom-rmsnorm

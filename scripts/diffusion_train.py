@@ -43,7 +43,7 @@ parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (e
 parser.add_argument("--num-cpus", type=str, default="all", help="number of CPU cores to use (integer or 'all')")
 
 # Model architecture
-parser.add_argument("--depth", type=int, default=8, help="depth of the Transformer model")
+parser.add_argument("--depth", type=int, default=12, help="depth of the Transformer model")
 parser.add_argument("--aspect-ratio", type=int, default=64, help="model_dim = depth * aspect_ratio")
 parser.add_argument("--head-dim", type=int, default=128, help="target head dimension for attention")
 parser.add_argument("--max-seq-len", type=int, default=1024, help="max context length")
