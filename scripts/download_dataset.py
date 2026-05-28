@@ -32,7 +32,7 @@ from nanochat_diffusion.common import print0, get_base_dir
 def download_and_convert(
     hf_dataset: str = "HuggingFaceFW/fineweb",
     hf_config: str = "sample-10BT",
-    num_examples: int = 50000,
+    num_examples: str = "50000",
     output_dir: str = "",
     replace: bool = False,
     shard_size: int = 10000,
@@ -53,7 +53,6 @@ def download_and_convert(
     from datasets import load_dataset
 
     if not output_dir:
-        # Default to data/ in the project root
         script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         output_dir = os.path.join(script_dir, "data")
     output_dir = os.path.abspath(output_dir)
@@ -66,23 +65,27 @@ def download_and_convert(
             for f in existing:
                 os.remove(os.path.join(output_dir, f))
 
-    num_val = max(1, int(num_examples * val_split))
-    num_train = num_examples - num_val
-    num_train_shards = math.ceil(num_train / shard_size) if num_train > 0 else 0
-    num_val_shards = math.ceil(num_val / shard_size) if num_val > 0 else 0
-    total_shards = num_train_shards + num_val_shards
+    download_all = (num_examples == "all")
+    if download_all:
+        num_examples_int = 10**9  # effectively unlimited
+        print0(f"Downloading ALL examples from {hf_dataset} ({hf_config})")
+    else:
+        num_examples_int = int(num_examples)
+        print0(f"Downloading {num_examples_int:,} examples from {hf_dataset} ({hf_config})")
 
-    print0(f"Downloading {num_examples:,} examples from {hf_dataset} ({hf_config})")
-    print0(f"  Train: {num_train:,} examples -> {num_train_shards} shards")
-    print0(f"  Val:   {num_val:,} examples   -> {num_val_shards} shards")
+    num_val = max(1, int(num_examples_int * val_split))
+    num_train = num_examples_int - num_val
+    num_train_shards = math.ceil(shard_size / shard_size) if num_train > 0 else 1
+    num_val_shards = math.ceil(shard_size / shard_size) if num_val > 0 else 1
+    total_shards = "all" if download_all else num_train_shards + num_val_shards
+
     print0(f"  Output: {output_dir}")
     print0(f"  Replace: {replace}")
     print0()
 
-    # Load dataset with streaming
     ds = load_dataset(hf_dataset, hf_config, split="train", streaming=True)
-    if num_examples:
-        ds = ds.take(num_examples)
+    if not download_all:
+        ds = ds.take(num_examples_int)
 
     examples_written = 0
     train_shard_idx = 0
@@ -95,7 +98,9 @@ def download_and_convert(
         if not text:
             continue
 
-        if i < num_train:
+        # Split: first num_train go to train, rest to val (infinite case: every 20th to val)
+        is_val = (i >= num_train) if not download_all else (i % 20 == 0)
+        if not is_val:
             current_train.append({"text": text})
             if len(current_train) >= shard_size:
                 shard_name = f"train_{train_shard_idx:05d}.parquet"
@@ -103,7 +108,7 @@ def download_and_convert(
                 table = pa.Table.from_pylist(current_train)
                 pq.write_table(table, shard_path)
                 examples_written += len(current_train)
-                pct = 100.0 * (i + 1) / num_examples
+                pct = 100.0 * (i + 1) / num_examples_int if not download_all else 0
                 print0(f"  [{pct:5.1f}%] Wrote {shard_name} ({len(current_train)} examples)")
                 current_train = []
                 train_shard_idx += 1
@@ -115,7 +120,7 @@ def download_and_convert(
                 table = pa.Table.from_pylist(current_val)
                 pq.write_table(table, shard_path)
                 examples_written += len(current_val)
-                pct = 100.0 * (i + 1) / num_examples
+                pct = 100.0 * (i + 1) / num_examples_int if not download_all else 0
                 print0(f"  [{pct:5.1f}%] Wrote {shard_name} ({len(current_val)} examples)")
                 current_val = []
                 val_shard_idx += 1
@@ -223,8 +228,8 @@ if __name__ == "__main__":
                         help="HuggingFace dataset name")
     parser.add_argument("--hf-config", type=str, default="sample-10BT",
                         help="Dataset config/split")
-    parser.add_argument("--num-examples", type=int, default=50000,
-                        help="Number of examples to download")
+    parser.add_argument("--num-examples", type=str, default="50000",
+                        help="Number of examples ('all' for entire dataset, or a number like 50000)")
     parser.add_argument("--output-dir", type=str, default="",
                         help="Output directory (default: data/)")
     parser.add_argument("--replace", action="store_true",
