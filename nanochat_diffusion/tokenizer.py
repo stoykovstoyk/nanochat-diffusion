@@ -7,7 +7,7 @@ Saves/loads from `tokenizer.json` in the data directory.
 
 import os
 import json
-from tokenizers import Tokenizer as HFTokenizer, models, trainers, pre_tokenizers
+from tokenizers import Tokenizer as HFTokenizer, models, trainers, pre_tokenizers, decoders
 
 # Diffusion UNK sentinel (outside BPE vocab, within padded embed range)
 UNK_TOKEN_ID = 4095  # for BPE vocab_size=4094; padded to 4160
@@ -28,9 +28,8 @@ class Tokenizer:
         else:
             # Create a fresh BPE for training
             self._hf = HFTokenizer(models.BPE(unk_token=None))
-            self._hf.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
-            if verbose:
-                print(f"Created new BPE tokenizer (vocab to be trained via train() method)")
+            self._hf.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=True)
+        self._hf.decoder = decoders.ByteLevel()
 
     def train(self, texts, vocab_size=4094):
         """Train BPE from an iterator of strings."""
