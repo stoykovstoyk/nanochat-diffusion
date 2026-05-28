@@ -193,6 +193,7 @@ class DiffusionModel(nn.Module):
         kv_cache: Optional[Any] = None,
         loss_reduction: str = "mean",
         return_all_logits: bool = False,
+        mask_inputs: bool = False,
     ) -> Any:
         """
         Diffusion forward pass.
@@ -204,12 +205,19 @@ class DiffusionModel(nn.Module):
             kv_cache: Optional KVCache for inference
             loss_reduction: 'mean' or 'none'
             return_all_logits: If True, return (logits, t_emb) tuple
+            mask_inputs: If True, mask tokens internally (for training)
 
         Returns:
             If targets is given: scalar loss
             Otherwise: logits (B, T, vocab_size) or (logits, t_emb) tuple
         """
         B, T = idx.size()
+
+        # Mask tokens internally (keeps this inside the compiled graph)
+        if mask_inputs:
+            if targets is None:
+                targets = idx
+            idx = self.mask_tokens(idx, t)
 
         # Get timestep embedding
         if t is not None and t.dim() == 2:
@@ -286,7 +294,7 @@ class DiffusionModel(nn.Module):
 
             # Add timestep to MLP
             if t_emb_for_attn is not None:
-                x_mlp_in = x + self.timestep_mlp_proj(t_emb).unsqueeze(1)
+                x_mlp_in = x + self.timestep_mlp_proj(t_emb).unsqueeze(1).to(torch.bfloat16)
             else:
                 x_mlp_in = x
 

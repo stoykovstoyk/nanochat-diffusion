@@ -68,7 +68,13 @@ parser.add_argument("--target-param-data-ratio", type=float, default=12, help="t
 
 # Optimization
 parser.add_argument("--device-batch-size", type=int, default=16, help="per-device batch size")
+parser.add_argument("--attention-backend", type=str, default="auto",
+                    choices=["auto", "math", "flash", "mem_efficient", "cudnn"],
+                    help="SDPA attention backend (default: auto)")
 parser.add_argument("--compile", action="store_true", help="torch.compile the model")
+parser.add_argument("--compile-mode", type=str, default="reduce-overhead",
+                    choices=["default", "reduce-overhead", "max-autotune", "max-autotune-no-cudagraphs"],
+                    help="torch.compile mode (default: reduce-overhead)")
 parser.add_argument("--fullgraph", action="store_true", help="use fullgraph=True with torch.compile (more aggressive fusion)")
 parser.add_argument("--cudnn-benchmark", action="store_true", help="enable torch.backends.cudnn.benchmark")
 parser.add_argument("--custom-rmsnorm", action="store_true", help="use custom fused CUDA RMS norm kernel")
@@ -325,6 +331,14 @@ if args.eval_only:
     # Evaluation code would go here
     sys.exit(0)
 
+if args.attention_backend != "auto":
+    import torch.backends.cuda as bc
+    bc.enable_flash_sdp(args.attention_backend == "flash")
+    bc.enable_mem_efficient_sdp(args.attention_backend == "mem_efficient")
+    bc.enable_math_sdp(args.attention_backend == "math")
+    bc.enable_cudnn_sdp(args.attention_backend == "cudnn")
+    print0(f"Attention backend set to: {args.attention_backend}")
+
 if args.custom_rmsnorm:
     use_custom_rmsnorm(True)
     print0("Using custom fused CUDA RMS norm kernel")
@@ -332,7 +346,7 @@ if args.custom_rmsnorm:
 if args.compile:
     fg = "fullgraph" if args.fullgraph else "partial"
     print0(f"Compiling model with torch.compile (mode=reduce-overhead, {fg})...")
-    model = torch.compile(model, mode="reduce-overhead", fullgraph=args.fullgraph)
+    model = torch.compile(model, mode=args.compile_mode, fullgraph=args.fullgraph)
 
 # Training loop
 model.train()
