@@ -170,7 +170,7 @@ def download_and_convert(
     train_bpe_from_parquet(output_dir)
 
 
-def train_bpe_from_parquet(data_dir: str, vocab_size: int = 4094):
+def train_bpe_from_parquet(data_dir: str, vocab_size: int = 32768):
     """
     Train a BPE tokenizer from parquet files in data_dir.
 
