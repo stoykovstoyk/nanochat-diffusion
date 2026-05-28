@@ -87,9 +87,17 @@ class DiffusionSampler:
         
         history = [] if return_history else None
         
+        # Timestep schedule: decreasing from max_steps to 0
+        num_diffusion_steps = self.model.config.num_diffusion_steps
+        t_schedule = torch.linspace(
+            num_diffusion_steps - 1, 0, num_steps, dtype=torch.long, device=device
+        )
+        
         for step in range(num_steps):
             if progress_callback:
                 progress_callback(step, num_steps)
+            
+            t = t_schedule[step].expand(B)  # (B,)
             
             # Current number of determined positions
             num_determined = is_determined.sum(dim=1).item()
@@ -117,17 +125,24 @@ class DiffusionSampler:
                     chosen = torch.randperm(len(unk_pos), device=device)[:num_unmask]
                     unmask_indices.append(unk_pos[chosen])
             
-            # Forward pass to predict all positions
-            # Use all-UNK sequence
+            # Forward pass to predict all positions with timestep conditioning
             input_tokens = current_tokens.clone()
-            logits = self.model(input_tokens)  # (B, T, vocab_size)
+            logits = self.model(input_tokens, t=t)  # (B, T, vocab_size)
+            
+            # Zero out forbidden token IDs (BOS=0 was ignore_index during training, UNK would loop)
+            forbidden_ids = {0, unk_id}
+            for b in range(B):
+                if b < len(unmask_indices):
+                    positions = unmask_indices[b]
+                    b_logits = logits[b, positions]  # (num_unmask, vocab_size)
+                    for fid in forbidden_ids:
+                        if fid < b_logits.size(-1):
+                            b_logits[:, fid] = -1e10
             
             # Sample from logits for UNK positions
             for b in range(B):
                 if b < len(unmask_indices):
                     positions = unmask_indices[b]
-                    
-                    # Get logits for these positions
                     b_logits = logits[b, positions]  # (num_unmask, vocab_size)
                     
                     # Apply temperature
@@ -203,7 +218,9 @@ class DiffusionSampler:
             padded = current_tokens + [self.model.config.unk_token_id] * (seq_len - len(current_tokens))
             
             input_seq = torch.tensor([padded], dtype=torch.long, device=device)
-            logits = self.model(input_seq)
+            # Use t=0 (least noise) for autoregressive-like generation
+            t = torch.zeros(1, dtype=torch.long, device=device)
+            logits = self.model(input_seq, t=t)
             
             # Get next token from UNK positions
             last_pos = len(current_tokens) - 1

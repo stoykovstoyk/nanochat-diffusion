@@ -103,35 +103,24 @@ class SinusoidalTimestepEmbedding(nn.Module):
         self.act = nn.SiLU()
         self.linear_2 = nn.Linear(self.timestep_proj_dim, config.n_embd, bias=True)
 
+        # Precompute sinusoidal frequencies (device-agnostic, created on first forward)
+        half_dim = self.timestep_embed_dim // 2
+        freqs = torch.exp(
+            -torch.arange(half_dim, dtype=torch.float32) * (torch.log(torch.tensor(10000.0)) / (half_dim - 1))
+        )
+        self.register_buffer('emb_freq', freqs)
+
     def forward(self, t: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            t: Tensor of shape (B,) with timestep values [0, num_diffusion_steps]
-        Returns:
-            Tensor of shape (B, n_embd)
-        """
         device = t.device
         dtype = self.linear_1.weight.dtype
 
-        # Compute sinusoidal frequencies
-        half_dim = self.timestep_embed_dim // 2
-        emb = torch.log(torch.tensor(10000.0, dtype=torch.float32, device=device)) / (
-            half_dim - 1
-        )
-        # shape: (half_dim,)
-        emb_freq = torch.exp(
-            torch.arange(half_dim, device=device, dtype=torch.float32) * (-emb / half_dim)
-        )
-
         # Expand for batch: (B, half_dim)
         t = t.to(torch.float32)
-        emb = t.unsqueeze(-1) * emb_freq.unsqueeze(0)
+        half_dim = self.timestep_embed_dim // 2
+        emb = t.unsqueeze(-1) * self.emb_freq.unsqueeze(0).to(device=device, dtype=torch.float32)
 
         # Concat sin/cos
-        emb = torch.cat([emb.sin(), emb.cos()], dim=-1)
-
-        # Cast
-        emb = emb.to(dtype)
+        emb = torch.cat([emb.sin(), emb.cos()], dim=-1).to(dtype)
 
         # Project
         emb = self.linear_1(emb)
@@ -204,6 +193,7 @@ class DiffusionModel(nn.Module):
         kv_cache: Optional[Any] = None,
         loss_reduction: str = "mean",
         return_all_logits: bool = False,
+        mask_inputs: bool = False,
     ) -> Any:
         """
         Diffusion forward pass.
@@ -215,12 +205,19 @@ class DiffusionModel(nn.Module):
             kv_cache: Optional KVCache for inference
             loss_reduction: 'mean' or 'none'
             return_all_logits: If True, return (logits, t_emb) tuple
+            mask_inputs: If True, mask tokens internally (for training)
 
         Returns:
             If targets is given: scalar loss
             Otherwise: logits (B, T, vocab_size) or (logits, t_emb) tuple
         """
         B, T = idx.size()
+
+        # Mask tokens internally (keeps this inside the compiled graph)
+        if mask_inputs:
+            if targets is None:
+                targets = idx
+            idx = self.mask_tokens(idx, t)
 
         # Get timestep embedding
         if t is not None and t.dim() == 2:
@@ -263,16 +260,7 @@ class DiffusionModel(nn.Module):
             if str(i) in self.gpt.value_embeds:
                 ve = self.gpt.value_embeds[str(i)](idx).to(x.dtype)
 
-            # Add timestep to block attention
-            if t_emb_for_attn is not None:
-                # Simple: concatenate timestep to input (B, T+1, n_embd)
-                t_emb_expanded = t_emb.unsqueeze(1).expand(-1, T, -1)
-                block_input = torch.cat([x, t_emb_expanded], dim=-1)
-            else:
-                block_input = x
-
             # Get attention components
-            layer_idx = i
             n_head = self.config.n_head
             n_kv_head = self.config.n_kv_head
             n_embd = self.config.n_embd
@@ -288,7 +276,7 @@ class DiffusionModel(nn.Module):
                 v = v + gate.unsqueeze(-1) * ve
 
             # Apply RoPE
-            cos, sin = self.gpt.cos[:, :, :, :], self.gpt.sin[:, :, :, :]
+            cos, sin = self.gpt.cos[:, :T], self.gpt.sin[:, :T]
             q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
             q, k = norm(q), norm(k)
             q = q * 1.2
@@ -305,9 +293,8 @@ class DiffusionModel(nn.Module):
             x = x + y
 
             # Add timestep to MLP
-            x_pre_mlp = x
             if t_emb_for_attn is not None:
-                x_mlp_in = x + self.timestep_mlp_proj(t_emb).unsqueeze(1)
+                x_mlp_in = x + self.timestep_mlp_proj(t_emb).unsqueeze(1).to(torch.bfloat16)
             else:
                 x_mlp_in = x
 
@@ -330,7 +317,7 @@ class DiffusionModel(nn.Module):
         logits = self.gpt.lm_head(x)
         logits = logits[..., :self.config.vocab_size]
         logits = logits.float()
-        logits = 15.0 * torch.tanh(logits / 15.0)
+        logits = F.hardtanh(logits, -15.0, 15.0)
 
         if targets is not None:
             loss = F.cross_entropy(
@@ -405,9 +392,8 @@ class DiffusionModel(nn.Module):
         # Each token independently masked with probability ratio[i]
         mask = torch.rand(B, T, device=idx.device) < ratios.unsqueeze(1)
 
-        # Set masked positions to UNK_ID
-        masked_idx = idx.clone()
-        masked_idx[mask] = self.config.unk_token_id
+        # Set masked positions to UNK_ID (where avoids clone+scatter)
+        masked_idx = torch.where(mask, self.config.unk_token_id, idx)
 
         if return_mask:
             return masked_idx, mask

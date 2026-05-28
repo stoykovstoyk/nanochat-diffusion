@@ -5,6 +5,7 @@ Adapted from karpathy/nanochat.
 
 import os
 import json
+import time
 import torch
 from nanochat_diffusion.common import get_base_dir, print0
 from nanochat_diffusion.diffusion_model import DiffusionModel, DiffusionConfig
@@ -89,7 +90,7 @@ def save_checkpoint(model, optimizer, step, loss, metrics, model_name="base", ph
         'step': step,
         'loss': float(loss),
         'metrics': metrics or {},
-        'timestamp': torch.cuda.get_timestamp() if torch.cuda.is_available() else 0,
+        'timestamp': time.time(),
     }
     with open(os.path.join(checkpoint_path, "metadata.json"), "w") as f:
         json.dump(metadata, f, indent=2)
@@ -143,26 +144,89 @@ def load_checkpoint(model, optimizer=None, step="latest", model_name="base", pha
     # Load metadata
     metadata_path = os.path.join(checkpoint_path, "metadata.json")
     if os.path.exists(metadata_path):
-        with open(metadata_path, "r") as f:
-            metadata = json.load(f)
-        print0(f"Checkpoint metadata: {metadata}")
-        return model, metadata
+        try:
+            with open(metadata_path, "r") as f:
+                metadata = json.load(f)
+            print0(f"Checkpoint metadata: {metadata}")
+            return model, metadata
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            print0(f"Warning: corrupted metadata.json at {metadata_path}, ignoring")
+            return model, None
     return model, None
 
 def load_model(model_name="base", device="cuda", phase="eval", **kwargs):
-    """Factory function to load model and optionally tokenizer"""
+    """Factory function to load model and optionally tokenizer.
+    
+    Loads config.json from the checkpoint to set model architecture,
+    then loads model weights. Falls back to kwargs/defaults if no checkpoint.
+    """
     from nanochat_diffusion.diffusion_model import DiffusionModel, DiffusionConfig
     from nanochat_diffusion.tokenizer import Tokenizer
+    from dataclasses import fields, asdict
+    
+    # Extract operational kwargs
+    checkpoint_dir = kwargs.pop("checkpoint_dir", None) or kwargs.pop("checkpoint_path", None)
+    checkpoint_step = kwargs.pop("checkpoint_step", "latest")
+    
+    # Determine checkpoint path
+    if not checkpoint_dir:
+        checkpoint_dir = get_checkpoint_dir(model_name=model_name, phase=phase)
+    
+    # Try to load config from checkpoint json
+    config_dict = None
+    resolved_step = checkpoint_step
+    if os.path.exists(checkpoint_dir):
+        if checkpoint_step == "latest":
+            try:
+                steps = sorted([int(d.split('_')[-1]) for d in os.listdir(checkpoint_dir)
+                                if d.startswith('step_')], reverse=True)
+                if steps:
+                    resolved_step = str(steps[0])
+            except (FileNotFoundError, ValueError):
+                pass
+        if resolved_step:
+            try:
+                step_int = int(resolved_step)
+                config_path = os.path.join(checkpoint_dir, f"step_{step_int:010d}", "config.json")
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        config_dict = json.load(f)
+            except (ValueError, FileNotFoundError, json.JSONDecodeError):
+                pass
+    
+    if config_dict and config_dict.get("diffusion_config"):
+        # Build config from saved checkpoint metadata
+        dc = config_dict["diffusion_config"]
+        config = DiffusionConfig(
+            sequence_len=dc.get("sequence_len", 1024),
+            vocab_size=dc.get("vocab_size", 32768),
+            n_layer=dc.get("n_layer", 12),
+            n_head=dc.get("n_head", 6),
+            n_kv_head=dc.get("n_kv_head", 6),
+            n_embd=dc.get("n_embd", 768),
+            window_pattern=dc.get("window_pattern", "SSSL"),
+            num_diffusion_steps=dc.get("num_diffusion_steps", 1000),
+            unk_token_id=dc.get("unk_token_id", 32767),
+            max_mask_ratio=dc.get("max_mask_ratio", 0.8),
+            sampling_steps=kwargs.pop("sampling_steps", 20),
+            unmask_schedule=kwargs.pop("unmask_schedule", "linear"),
+        )
+    else:
+        # Only pass valid DiffusionConfig fields from kwargs
+        valid_fields = {f.name for f in fields(DiffusionConfig)}
+        for key in list(kwargs):
+            if key not in valid_fields:
+                kwargs.pop(key, None)
+        config = DiffusionConfig(**kwargs)
     
     # Create model
-    config = DiffusionConfig(**kwargs)
     model = DiffusionModel(config)
     model.to(device)
     model.eval()
     
-    # Load checkpoint if exists
-    if kwargs.get('checkpoint_path'):
-        load_checkpoint(model, model_name=model_name, phase=phase, step=kwargs.get('checkpoint_step', 'latest'))
+    # Load checkpoint weights
+    if os.path.exists(checkpoint_dir) and resolved_step:
+        load_checkpoint(model, model_name=model_name, phase=phase, step=resolved_step)
     
     # Create tokenizer
     tokenizer = Tokenizer(data_dir="", verbose=False)

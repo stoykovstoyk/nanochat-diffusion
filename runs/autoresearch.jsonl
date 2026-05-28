@@ -1,0 +1,7 @@
+{"type":"config","name":"Optimize Diffusion Training Speed","metricName":"training_time_s","metricUnit":"s","bestDirection":"lower"}
+{"run":1,"commit":"c4ffbb3","metric":118.634,"metrics":{},"status":"keep","description":"baseline","timestamp":1779871221,"segment":0}
+{"run":2,"commit":"6d3cb50","metric":110.615,"metrics":{},"status":"keep","description":"hardtanh instead of tanh logit softcap","timestamp":1779871949,"segment":0}
+{"run":3,"commit":"931fd51","metric":109.285,"metrics":{},"status":"keep","description":"remove dead code in diffusion forward, --num-cpus 1","timestamp":1779873294,"segment":0}
+{"run":4,"commit":"9ac38dc","metric":21.679,"metrics":{},"status":"keep","description":"GPU training (RTX A2000) instead of CPU","timestamp":1779873373,"segment":0}
+{"run":5,"commit":"59d81a7","metric":17.669,"metrics":{},"status":"keep","description":"skip final checkpoint save in benchmark mode","timestamp":1779873542,"segment":0}
+{"run":6,"commit":"9270f90","metric":16.985,"metrics":{},"status":"keep","description":"delayed loss.item() to reduce CUDA sync","timestamp":1779872523,"segment":0}

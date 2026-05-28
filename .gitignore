@@ -11,3 +11,7 @@ eval_bundle/
 # Local setup
 CLAUDE.md
 wandb/
+*.so
+compiled_cache.db
+test_mma_direct*
+_debug_*.py

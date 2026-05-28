@@ -40,7 +40,24 @@ class GPTConfig:
     window_pattern: str = "SSSL"
 
 
+_USE_CUSTOM_RMSNORM = False
+_custom_rmsnorm_fn = None
+
+def use_custom_rmsnorm(enabled=True):
+    global _USE_CUSTOM_RMSNORM, _custom_rmsnorm_fn
+    if enabled and _custom_rmsnorm_fn is None:
+        try:
+            from cuda_kernels.rms_norm_triton import rms_norm as _rn
+            _custom_rmsnorm_fn = _rn
+        except Exception as e:
+            print(f"Warning: custom RMS norm failed to load: {e}")
+            _custom_rmsnorm_fn = None
+    _USE_CUSTOM_RMSNORM = enabled and _custom_rmsnorm_fn is not None
+    return _USE_CUSTOM_RMSNORM
+
 def norm(x):
+    if _USE_CUSTOM_RMSNORM:
+        return _custom_rmsnorm_fn(x)
     return F.rms_norm(x, (x.size(-1),)) # note that this will run in bf16, seems ok
 
 class Linear(nn.Linear):
@@ -484,7 +501,7 @@ class GPT(nn.Module):
         logits = self.lm_head(x) # (B, T, padded_vocab_size) <- very big tensor, large amount of memory
         logits = logits[..., :self.config.vocab_size] # slice to remove padding
         logits = logits.float() # switch to fp32 for logit softcap and loss computation
-        logits = softcap * torch.tanh(logits / softcap) # squash the logits
+        logits = F.hardtanh(logits, -softcap, softcap)
 
         if targets is not None:
             # training: given the targets, compute and return the loss

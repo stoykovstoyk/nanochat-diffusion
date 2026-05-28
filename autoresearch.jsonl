@@ -1,0 +1,30 @@
+{"type":"config","name":"Optimize Diffusion Training Speed on DGX Spark","metricName":"training_time_s","metricUnit":"s","bestDirection":"lower"}
+{"run":1,"commit":"341d730","metric":17.785,"metrics":{"final_loss":2.639},"status":"keep","description":"baseline on GB10 (Blackwell, cc12.1)","timestamp":1779901234,"segment":0}
+{"run":2,"commit":"30a17c7","metric":17.013,"metrics":{"final_loss":2.723},"status":"keep","description":"no epoch loop, pre-gen timesteps, no grad clip, set_to_none, print50","timestamp":1779901948,"segment":0}
+{"run":3,"commit":"e45c973","metric":12.051,"metrics":{"final_loss":2.723},"status":"keep","description":"disable GradScaler/fp16 autocast","timestamp":1779901986,"segment":0}
+{"run":4,"commit":"8e71934","metric":11.965,"metrics":{"final_loss":2.724},"status":"keep","description":"cache sinusoidal freq buffer in timestep embed","timestamp":1779902150,"segment":0}
+{"run":5,"commit":"1ed3f37","metric":11.781,"metrics":{"final_loss":2.724},"status":"keep","description":"torch.where in mask_tokens","timestamp":1779902232,"segment":0}
+{"run":6,"commit":"*","metric":11.581,"metrics":{"final_loss":2.567},"status":"keep","description":"torch 2.12.0+cu130 (CUDA 13) + Python 3.12","timestamp":1779902755,"segment":0}
+{"run":7,"commit":"*","metric":9.745,"metrics":{"final_loss":2.567},"status":"keep","description":"torch.compile (wired up, was dead code!)","timestamp":1779902935,"segment":0}
+{"run":8,"commit":"*","metric":9.421,"metrics":{"final_loss":2.567},"status":"keep","description":"compile mode=reduce-overhead (CUDA graphs)","timestamp":1779903010,"segment":0}
+{"run":9,"commit":"*","metric":9.660,"metrics":{"final_loss":2.800},"status":"keep","description":"compile + batch=16","timestamp":1779903075,"segment":0}
+{"run":10,"commit":"*","metric":9.378,"metrics":{"final_loss":2.785},"status":"keep","description":"compile + batch=32 (341 tok/s)","timestamp":1779903145,"segment":0}
+{"run":11,"commit":"*","metric":12.580,"metrics":{"final_loss":3.268},"status":"keep","description":"depth=12 (n_embd=768) + compile (40% speedup vs no-compile)","timestamp":1779903230,"segment":0}
+{"run":12,"commit":"*","metric":9.295,"metrics":{"final_loss":2.802},"status":"keep","description":"compile + seq=512 + bs=16 (88K tok/s)","timestamp":1779903310,"segment":0}
+{"run":13,"commit":"*","metric":15.616,"metrics":{"final_loss":3.114},"status":"keep","description":"depth=16 (1024-dim) + compile (56% speedup vs no-compile)","timestamp":1779903395,"segment":0}
+{"run":14,"commit":"*","metric":25.300,"metrics":{"final_loss":3.250,"unit":"s"},"status":"discard","description":"fullgraph=True CUDA graphs (2.7x slower!)","timestamp":1779903480,"segment":0}
+{"run":15,"commit":"*","metric":384.4,"metrics":{"final_loss":3.250,"unit":"ms_per_iter"},"status":"keep","description":"Baseline after triton 3.7.0 upgrade (384.4ms/iter, compile+ctypes RMS)","timestamp":1779904000,"segment":0}
+{"run":16,"commit":"*","metric":356.8,"metrics":{"final_loss":3.240,"unit":"ms_per_iter"},"status":"keep","description":"Triton RMS norm replaces ctypes (compile-compatible)","timestamp":1779904100,"segment":0}
+{"run":17,"commit":"*","metric":256.8,"metrics":{"final_loss":3.250,"unit":"ms_per_iter"},"status":"keep","description":"+TRITON_CUDA_ARCH=sm_120 fix (28% compile speedup)","timestamp":1779904200,"segment":0}
+{"run":18,"commit":"*","metric":215.4,"metrics":{"final_loss":3.261,"unit":"ms_per_iter"},"status":"keep","description":"Best steady-state (215.4ms/iter, 120 iters, 100 warmup, 43% below baseline)","timestamp":1779904300,"segment":0}
+{"run":19,"commit":"*","metric":0.012,"metrics":{"final_loss":"N/A","unit":"ms_per_forward"},"status":"keep","description":"FP4Linear dequantized fwd (12us vs 8us bf16, 3.2x mem compression)","timestamp":1779904400,"segment":0}
+{"run":20,"commit":"*","metric":0,"metrics":{"final_loss":"N/A","unit":""},"status":"info","description":"FP4 MMA confirmed on SM121a (mma.sync f8f6f4.e2m1.e2m1)","timestamp":1779904500,"segment":0}
+{"run":21,"commit":"*","metric":0,"metrics":{"final_loss":"N/A","unit":""},"status":"info","description":"CUTLASS 4.4.2 FP4 blocked: lacks Sm121 arch, sm_120a cubins won't run on sm_121","timestamp":1779904600,"segment":0}
+{"run":22,"commit":"*","metric":217.7,"metrics":{"final_loss":3.347,"unit":"ms_per_iter"},"status":"keep","description":"Confirmed best: 217.7ms/iter (depth=8, seq=512, bs=16, compile + Triton RMS + arch fix)","timestamp":1779999999,"segment":0}
+{"run":23,"commit":"*","metric":557.4,"metrics":{"final_loss":"10.40","unit":"ms_per_iter"},"status":"info","description":"Larger model (depth=12, n_embd=768): 557ms/iter (better utilization but slower absolute)","timestamp":1779999999,"segment":0}
+{"run":24,"commit":"*","metric":0,"metrics":{"unit":""},"status":"info","description":"GEMM dispatch benchmark: cuBLAS is default on sm_121, all backends equal","timestamp":1779999999,"segment":0}
+{"run":25,"commit":"*","metric":0,"metrics":{"unit":""},"status":"info","description":"Triton <3.7 blocked: needs python3.12-dev headers (no sudo). triton 3.7.0 works with precompiled libs.","timestamp":1779999999,"segment":0}
+{"run":26,"commit":"*","metric":216.3,"metrics":{"final_loss":3.347,"unit":"ms_per_iter"},"status":"keep","description":"Triton 3.7.0 best confirmed: 216.3ms (compile reduce-overhead + custom RMS norm + TRITON_CUDA_ARCH=sm_120)","timestamp":1779999999,"segment":0}
+{"run":27,"commit":"*","metric":306.6,"metrics":{"final_loss":3.347,"unit":"ms_per_iter"},"status":"discard","description":"Triton 3.5.1 PyPI: 306ms (worse; PyPI 3.5.1 != community 3.5.1+git fork)","timestamp":1779999999,"segment":0}
+{"run":28,"commit":"*","metric":307.4,"metrics":{"final_loss":3.347,"unit":"ms_per_iter"},"status":"discard","description":"Triton 3.6.0 PyPI: 307ms (worse; Blackwell features in 3.6 but no 3.5.1+git speedup)","timestamp":1779999999,"segment":0}
+{"run":29,"commit":"*","metric":217.5,"metrics":{"final_loss":3.347,"unit":"ms_per_iter"},"status":"info","description":"Math SDPA backend: 217.5ms (same as default for T=512)","timestamp":1779999999,"segment":0}
