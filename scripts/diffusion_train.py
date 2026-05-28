@@ -53,7 +53,7 @@ parser.add_argument("--num-diffusion-steps", type=int, default=1000, help="total
 parser.add_argument("--sampling-steps", type=int, default=20, help="denoising steps for inference")
 parser.add_argument("--max-mask-ratio", type=float, default=0.8, help="maximum token mask ratio")
 parser.add_argument("--noise-schedule", type=str, default="linear", help="noise schedule type")
-parser.add_argument("--unk-token-id", type=int, default=32767, help="UNK token ID")
+parser.add_argument("--unk-token-id", type=int, default=4095, help="UNK token ID (outside BPE vocab, within padded range)")
 
 # Training horizon
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps")
@@ -87,7 +87,7 @@ parser.add_argument("--save-every", type=int, default=1000, help="save checkpoin
 parser.add_argument("--resume", type=str, default="", help="resume from checkpoint step")
 
 # Data
-parser.add_argument("--vocab-size", type=int, default=32768, help="vocab size")
+parser.add_argument("--vocab-size", type=int, default=4096, help="vocab size (4096 = BOS + 4094 BPE tokens + UNK)")
 parser.add_argument("--tokenizer-batch-size", type=int, default=128, help="batch size for tokenization")
 
 args = parser.parse_args()

@@ -95,7 +95,7 @@ def create_noise_schedule(name: str = "linear", **kwargs) -> NoiseSchedule:
 def mask_tokens_simple(
     idx: torch.Tensor,
     t: torch.Tensor,
-    unk_token_id: int = 32767,
+    unk_token_id: int = 4095,
     max_mask_ratio: float = 0.8,
     schedule: Optional[NoiseSchedule] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:

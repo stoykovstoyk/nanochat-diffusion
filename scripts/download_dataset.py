@@ -160,7 +160,61 @@ def download_and_convert(
     print0(f"  python -m scripts.diffusion_train --device-type=cuda \\")
     print0(f"      --depth=8 --max-seq-len=1024 --device-batch-size=16 \\")
     print0(f"      --num-iterations=1000 --lr=3e-4 --warmup-iters=100 \\")
-    print0(f"      --save-every=500 --eval-iters=200")
+    print0(f"      --save-every=500")
+    print0()
+    print0("=" * 60)
+    print0("Training BPE tokenizer from downloaded data...")
+    print0("=" * 60)
+
+    # Train BPE tokenizer on the downloaded text
+    train_bpe_from_parquet(output_dir)
+
+
+def train_bpe_from_parquet(data_dir: str, vocab_size: int = 4094):
+    """
+    Train a BPE tokenizer from parquet files in data_dir.
+
+    Saves tokenizer.json to <data_dir>/tokenizer_diffusion/.
+    """
+    import glob
+    import time
+    from nanochat_diffusion.tokenizer import Tokenizer
+
+    # Collect all train parquet files
+    parquet_files = sorted(glob.glob(os.path.join(data_dir, "train_*.parquet")))
+    if not parquet_files:
+        parquet_files = sorted(glob.glob(os.path.join(data_dir, "*.parquet")))
+
+    if not parquet_files:
+        print0("No parquet files found for BPE training. Skipping.")
+        return
+
+    print0(f"Reading {len(parquet_files)} parquet files for BPE training...")
+
+    def text_iterator():
+        for path in parquet_files:
+            table = pq.read_table(path, columns=["text"])
+            for batch in table.to_batches():
+                texts = batch.column("text").to_pylist()
+                for t in texts:
+                    if t:
+                        yield t
+
+    # Create tokenizer and train
+    t0 = time.time()
+    tok = Tokenizer(data_dir="", verbose=False)
+    tok.train(text_iterator(), vocab_size=vocab_size)
+
+    # Save
+    save_dir = os.path.join(data_dir, "tokenizer_diffusion")
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, "tokenizer.json")
+    tok.save(save_path)
+
+    elapsed = time.time() - t0
+    print0(f"BPE tokenizer trained in {elapsed:.1f}s")
+    print0(f"  Vocab size: {tok._hf.get_vocab_size()}")
+    print0(f"  Saved to: {save_path}")
 
 
 if __name__ == "__main__":
