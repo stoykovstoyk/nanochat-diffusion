@@ -18,7 +18,7 @@ from nanochat_diffusion.diffusion_model import DiffusionModel
 from nanochat_diffusion.diffusion_sampler import DiffusionSampler
 from nanochat_diffusion.tokenizer import Tokenizer, UNK_TOKEN_ID
 from nanochat_diffusion.common import print0, print_banner, get_base_dir, compute_init, autodetect_device_type
-from nanochat_diffusion.checkpoint_manager import load_model
+from nanochat_diffusion.checkpoint_manager import load_model, get_checkpoint_dir
 
 print_banner()
 
@@ -141,6 +141,14 @@ def main():
         checkpoint_step=args.checkpoint_step,
         device=device
     )
+
+    # Warn if no checkpoint was loaded (untrained model)
+    ckpt_dir = args.checkpoint_dir or get_checkpoint_dir("diffusion", "train")
+    import os
+    has_checkpoints = os.path.isdir(ckpt_dir) and any(d.startswith("step_") for d in os.listdir(ckpt_dir))
+    if not has_checkpoints:
+        print0("WARNING: No trained checkpoint found! Model has random weights.\n"
+               f"         Run training first or check {ckpt_dir}")
 
     print0(f"Device: {device}")
     print0(f"Checkpoint: {args.checkpoint_step}")

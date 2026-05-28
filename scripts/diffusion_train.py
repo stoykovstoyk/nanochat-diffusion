@@ -302,14 +302,14 @@ print0(f"Avg time/iter: {train_elapsed/total_steps*1000:.1f}ms")
 print0(f"Final loss: {losses[-1].item():.4f}")
 print0("=" * 80)
 
-if args.save_every <= args.num_iterations:
-    final_loss_val = losses[-1].item() if hasattr(losses[-1], 'item') else float(losses[-1])
-    save_checkpoint(
-        model, optimizer, total_steps, final_loss_val,
-        {"final_loss": final_loss_val},
-        model_name="diffusion",
-        phase="train"
-    )
+# Always save final checkpoint
+final_loss_val = losses[-1].item() if hasattr(losses[-1], 'item') else float(losses[-1])
+save_checkpoint(
+    model, optimizer, total_steps, final_loss_val,
+    {"final_loss": final_loss_val},
+    model_name="diffusion",
+    phase="train"
+)
 
 try:
     wandb_run.finish()
