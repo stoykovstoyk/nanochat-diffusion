@@ -218,7 +218,9 @@ def load_model(model_name="base", device="cuda", phase="eval", **kwargs):
     if os.path.exists(checkpoint_dir) and resolved_step:
         load_checkpoint(model, model_name=model_name, phase=phase, step=resolved_step)
     
-    # Create tokenizer
-    tokenizer = Tokenizer(data_dir="", verbose=False)
+    # Create tokenizer — use tokenizer saved in base_dir/tokenizer_diffusion/
+    from nanochat_diffusion.common import get_base_dir
+    tokenizer_dir = os.path.join(get_base_dir(), "tokenizer_diffusion")
+    tokenizer = Tokenizer(data_dir=tokenizer_dir, verbose=False)
     
     return model, tokenizer

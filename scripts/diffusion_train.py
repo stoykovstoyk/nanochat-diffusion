@@ -145,7 +145,31 @@ model.to(device)
 base_dir = get_base_dir()
 tokenizer_path = os.path.join(base_dir, "tokenizer_diffusion")
 os.makedirs(tokenizer_path, exist_ok=True)
-tokenizer = Tokenizer(tokenizer_path, verbose=True)
+
+# Check if BPE is already trained, otherwise train from data
+tokenizer_json = os.path.join(tokenizer_path, "tokenizer.json")
+if not os.path.exists(tokenizer_json):
+    import glob
+    parquet_files = sorted(glob.glob(os.path.join(base_dir, "train_*.parquet")))
+    if not parquet_files:
+        print0("WARNING: No training data found for BPE tokenizer. Use download_dataset.py first.")
+        tokenizer = Tokenizer(tokenizer_path, verbose=True)
+    else:
+        print0("Training BPE tokenizer from parquet data...")
+        import pyarrow.parquet as pq
+        def text_iter():
+            for path in parquet_files:
+                table = pq.read_table(path, columns=["text"])
+                for batch in table.to_batches():
+                    for t in batch.column("text").to_pylist():
+                        if t:
+                            yield t
+        tokenizer = Tokenizer(data_dir="", verbose=False)
+        tokenizer.train(text_iter(), vocab_size=4094)
+        tokenizer.save(tokenizer_json)
+        print0(f"BPE tokenizer trained and saved to {tokenizer_json}")
+else:
+    tokenizer = Tokenizer(tokenizer_path, verbose=True)
 
 # -----------------------------------------------------------------------------
 # Setup tokenizer data loader
