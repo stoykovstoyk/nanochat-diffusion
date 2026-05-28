@@ -13,7 +13,12 @@ import wandb
 import torch
 import torch.distributed as dist
 
-from nanochat_diffusion.gpt import GPT, GPTConfig, Linear
+torch.set_float32_matmul_precision('high')
+# torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = True
+
+# Enable cudnn benchmark if requested (handled after parse_args)
+
+from nanochat_diffusion.gpt import GPT, GPTConfig, Linear, use_custom_rmsnorm
 from nanochat_diffusion.diffusion_model import DiffusionModel, DiffusionConfig
 from nanochat_diffusion.diffusion_scheduler import create_noise_schedule, mask_tokens_simple
 from nanochat_diffusion.tokenizer import Tokenizer, UNK_TOKEN_ID
@@ -64,6 +69,9 @@ parser.add_argument("--target-param-data-ratio", type=float, default=12, help="t
 # Optimization
 parser.add_argument("--device-batch-size", type=int, default=16, help="per-device batch size")
 parser.add_argument("--compile", action="store_true", help="torch.compile the model")
+parser.add_argument("--fullgraph", action="store_true", help="use fullgraph=True with torch.compile (more aggressive fusion)")
+parser.add_argument("--cudnn-benchmark", action="store_true", help="enable torch.backends.cudnn.benchmark")
+parser.add_argument("--custom-rmsnorm", action="store_true", help="use custom fused CUDA RMS norm kernel")
 parser.add_argument("--warmup-iters", type=int, default=50, help="warmup steps")
 parser.add_argument("--lr", type=float, default=4e-4, help="base learning rate")
 parser.add_argument("--weight-decay", type=float, default=0.1, help="weight decay")
@@ -83,6 +91,11 @@ parser.add_argument("--vocab-size", type=int, default=32768, help="vocab size")
 parser.add_argument("--tokenizer-batch-size", type=int, default=128, help="batch size for tokenization")
 
 args = parser.parse_args()
+
+# Apply cudnn benchmark
+if args.cudnn_benchmark:
+    torch.backends.cudnn.benchmark = True
+    print0("Enabled cudnn benchmark")
 
 # -----------------------------------------------------------------------------
 # Parse CPU core count
@@ -288,6 +301,7 @@ print0("=" * 80)
 print0("Starting training...")
 print0("=" * 80)
 
+train_start_time = time.time()
 total_steps = 0
 best_loss = float('inf')
 
@@ -311,12 +325,21 @@ if args.eval_only:
     # Evaluation code would go here
     sys.exit(0)
 
+if args.custom_rmsnorm:
+    use_custom_rmsnorm(True)
+    print0("Using custom fused CUDA RMS norm kernel")
+
+if args.compile:
+    fg = "fullgraph" if args.fullgraph else "partial"
+    print0(f"Compiling model with torch.compile (mode=reduce-overhead, {fg})...")
+    model = torch.compile(model, mode="reduce-overhead", fullgraph=args.fullgraph)
+
 # Training loop
 model.train()
 losses = []
 eval_losses = []
-# Disable GradScaler/autocast — Blackwell GB10 runs fp32 efficiently and old PyTorch fp16 paths may be suboptimal
-scaler = None
+# Disable GradScaler/autocast — fp32 is fastest on this model size
+use_bf16 = False
 
 # Single dataloader (no epoch loop)
 dataloader = get_dataloader("train")
@@ -340,28 +363,17 @@ for step_idx, (input_tokens, target_tokens) in enumerate(dataloader):
         masked_tokens = model.mask_tokens(inputs, t)
         
         # Forward pass
-        if scaler is not None:
-            with torch.amp.autocast('cuda', dtype=torch.float16):
-                loss = model(masked_tokens, t=t, targets=targets)
-        else:
-            loss = model(masked_tokens, t=t, targets=targets)
+        loss = model(masked_tokens, t=t, targets=targets)
         
         # Backward pass
-        if scaler is not None:
-            scaler.scale(loss).backward()
-        else:
-            loss.backward()
+        loss.backward()
         
         # Optimizer step
-        if scaler is not None:
-            scaler.unscale_(optimizer)
-            scaler.step(optimizer)
-            scaler.update()
-        else:
-            optimizer.step()
+        optimizer.step()
         optimizer.zero_grad(set_to_none=True)
         
-        losses.append(loss.detach())
+        # Clone loss to avoid CUDAGraph memory overwrite when torch.compile captures the graph
+        losses.append(loss.detach().clone())
             
     else:
         # Standard GPT forward pass
@@ -392,9 +404,12 @@ for step_idx, (input_tokens, target_tokens) in enumerate(dataloader):
     if args.num_iterations > 0 and total_steps >= args.num_iterations:
         break
 
+train_elapsed = time.time() - train_start_time
 print0("=" * 80)
 print0("Training complete!")
 print0(f"Total steps: {total_steps}")
+print0(f"Total time: {train_elapsed:.2f}s")
+print0(f"Avg time/iter: {train_elapsed/total_steps*1000:.1f}ms")
 print0(f"Final loss: {losses[-1].item():.4f}")
 print0("=" * 80)
 
