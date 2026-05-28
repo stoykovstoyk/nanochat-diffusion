@@ -4,3 +4,4 @@ __pycache__/
 *.so
 wandb/
 data/checkpoints/
+data/*.parquet

@@ -304,10 +304,12 @@ if args.compile:
 model.train()
 losses = []
 best_loss = float('inf')
+step_times = []  # track step timing
 
 dataloader = get_dataloader("train")
 
 for step_idx, (input_tokens, target_tokens) in enumerate(dataloader):
+    step_start = time.time()
     total_steps += 1
     if total_steps == 1 or total_steps == 6:
         print0(f"Step {total_steps}: batch shape={input_tokens.shape}")
@@ -333,11 +335,16 @@ for step_idx, (input_tokens, target_tokens) in enumerate(dataloader):
     losses.append(loss.detach().clone())
     current_loss = losses[-1].item()
 
+    step_elapsed = time.time() - step_start
+    step_times.append(step_elapsed)
+
     avg_loss = sum(losses[-10:]) / min(10, len(losses))
 
     if total_steps % 50 == 0:
+        avg_step_ms = sum(step_times[-50:]) / min(50, len(step_times)) * 1000
         print0(f"Step {total_steps}: loss = {avg_loss.item():.4f}, "
-               f"lr = {optimizer.param_groups[0]['lr']:.6f}")
+               f"lr = {optimizer.param_groups[0]['lr']:.6f}, "
+               f"{avg_step_ms:.1f}ms/step")
 
     # Save every save_every steps if loss improved
     if args.save_every > 0 and total_steps % args.save_every == 0 and current_loss < best_loss:
